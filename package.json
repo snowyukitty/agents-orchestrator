@@ -1,0 +1,21 @@
+{
+  "name": "snowy-agent-orchestrator",
+  "version": "0.1.0",
+  "description": "Visual AI Agent Automation Orchestrator - Block-based CLI automation tool",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-packager . SnowyOrchestrator --platform=win32 --arch=x64 --overwrite --out=dist --ignore=\"(dist|scripts|.gitignore)\" --asar"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-packager": "^17.1.2"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0",
+    "sortablejs": "^1.15.6",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0"
+  }
+}

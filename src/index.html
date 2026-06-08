@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <title>Snowy Agent Orchestrator</title>
+  <link rel="stylesheet" href="../node_modules/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+
+  <!-- ═══ Title Bar ═══ -->
+  <header class="titlebar" id="titlebar">
+    <div class="titlebar-drag">
+      <span class="titlebar-icon">🧊</span>
+      <span class="titlebar-text">Snowy Agent Orchestrator</span>
+    </div>
+    <div class="titlebar-version">v0.1.0 MVP</div>
+  </header>
+
+  <!-- ═══ Main Content ═══ -->
+  <div class="main-container">
+
+    <!-- ── Left Panel: Block Palette ── -->
+    <aside class="panel panel-palette" id="palette-panel">
+      <div class="panel-header">
+        <h2>⬡ Blocks</h2>
+      </div>
+      <div class="palette-blocks" id="palette-blocks">
+        <!-- Palette blocks rendered by JS -->
+      </div>
+      <div class="palette-footer">
+        <span class="palette-hint">Double-click or drag to add</span>
+      </div>
+    </aside>
+
+    <!-- ── Center Panel: Workflow Editor ── -->
+    <main class="panel panel-editor" id="editor-panel">
+      <div class="panel-header">
+        <div class="workflow-info">
+          <input type="text" class="workflow-name" id="workflow-name"
+                 value="New Workflow" placeholder="Workflow Name" spellcheck="false">
+          <span class="workflow-status" id="workflow-status">Idle</span>
+        </div>
+        <div class="editor-actions">
+          <button class="btn btn-icon" id="btn-clear" title="Clear All Blocks">
+            <span>🗑️</span>
+          </button>
+        </div>
+      </div>
+      <div class="editor-canvas" id="editor-canvas">
+        <div class="editor-empty" id="editor-empty">
+          <div class="empty-icon">🧱</div>
+          <p class="empty-title">Build Your Automation</p>
+          <p class="empty-hint">Drag blocks from the palette or double-click to add</p>
+        </div>
+        <div class="block-list" id="block-list">
+          <!-- Workflow blocks rendered by JS -->
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Resizer ── -->
+    <div class="resizer" id="resizer"></div>
+
+    <!-- ── Right Panel: Log + Terminal ── -->
+    <aside class="panel panel-terminal" id="terminal-panel">
+      <!-- Tab bar -->
+      <div class="panel-header output-tabs">
+        <div class="tab-group">
+          <button class="tab-btn active" id="tab-log" data-tab="log">📋 Log</button>
+          <button class="tab-btn" id="tab-term" data-tab="term">⬡ Terminal</button>
+        </div>
+        <div class="tab-actions">
+          <button class="btn btn-icon btn-sm" id="btn-clear-log" title="Clear Log">
+            <span>🧹</span>
+          </button>
+          <button class="btn btn-icon btn-sm" id="btn-clear-terminal" title="Clear Terminal">
+            <span>🗑️</span>
+          </button>
+        </div>
+      </div>
+      <!-- Log pane -->
+      <div class="output-log" id="output-log">
+        <div class="log-line system">❯ Ready. Build a workflow and hit <strong>▶ Run</strong>.</div>
+      </div>
+      <!-- Horizontal resizer -->
+      <div class="resizer-h" id="resizer-h"></div>
+      <!-- Terminal pane (xterm.js) -->
+      <div class="output-term" id="terminal-output">
+      </div>
+    </aside>
+  </div>
+
+  <!-- ═══ Bottom Toolbar ═══ -->
+  <footer class="toolbar" id="toolbar">
+    <div class="toolbar-left">
+      <button class="btn btn-primary btn-run" id="btn-run">
+        <span class="btn-icon-text">▶</span> Run Now
+      </button>
+      <button class="btn btn-danger btn-stop hidden" id="btn-stop">
+        <span class="btn-icon-text">■</span> Stop
+      </button>
+    </div>
+    <div class="toolbar-center">
+      <button class="btn btn-secondary" id="btn-save">
+        <span>💾</span> Save
+      </button>
+      <button class="btn btn-secondary" id="btn-load">
+        <span>📂</span> Load
+      </button>
+      <button class="btn btn-secondary" id="btn-export">
+        <span>📤</span> Export
+      </button>
+      <select id="theme-selector" class="theme-select" title="Terminal Theme">
+        <option value="ps">PowerShell Blue</option>
+        <option value="dark">Hacker Dark</option>
+        <option value="light">Light Mode</option>
+      </select>
+    </div>
+    <div class="toolbar-right">
+      <div class="status-indicator" id="status-indicator"></div>
+      <span class="status-text" id="status-text">Ready</span>
+    </div>
+  </footer>
+
+  <!-- ═══ Scripts ═══ -->
+  <script src="../node_modules/sortablejs/Sortable.min.js"></script>
+  <script src="../node_modules/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+  <script type="module" src="js/app.js"></script>
+
+</body>
+</html>
