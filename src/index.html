@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
-  <title>Snowy Agent Orchestrator</title>
+  <title>Agents Orchestrator</title>
   <link rel="stylesheet" href="../node_modules/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles/main.css">
 </head>
@@ -13,8 +13,8 @@
   <!-- ═══ Title Bar ═══ -->
   <header class="titlebar" id="titlebar">
     <div class="titlebar-drag">
-      <span class="titlebar-icon">🧊</span>
-      <span class="titlebar-text">Snowy Agent Orchestrator</span>
+      <span class="titlebar-icon">🎛️</span>
+      <span class="titlebar-text">Agents Orchestrator</span>
     </div>
     <div class="titlebar-version">v0.1.0 MVP</div>
   </header>
@@ -113,6 +113,10 @@
       <button class="btn btn-secondary" id="btn-export">
         <span>📤</span> Export
       </button>
+      <button class="btn btn-secondary" id="btn-schedules" title="Scheduled workflow runs">
+        <span>⏱</span> Schedules <span class="sched-badge" id="sched-badge">0</span>
+      </button>
+      <span class="schedule-next" id="schedule-next"></span>
       <select id="theme-selector" class="theme-select" title="Terminal Theme">
         <option value="ps">PowerShell Blue</option>
         <option value="dark">Hacker Dark</option>
@@ -124,6 +128,23 @@
       <span class="status-text" id="status-text">Ready</span>
     </div>
   </footer>
+
+  <!-- ═══ Scheduled Runs Modal ═══ -->
+  <div class="modal-overlay hidden" id="schedule-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>⏱ Scheduled Runs</h2>
+        <button class="btn btn-icon btn-sm" id="btn-close-schedules" title="Close">✕</button>
+      </div>
+      <div class="modal-body" id="schedule-list">
+        <!-- Scheduled workflow rows rendered by JS -->
+      </div>
+      <div class="modal-footer">
+        <span class="modal-hint">Workflows whose first block is a <strong>Schedule</strong> appear here. Save a workflow to keep it scheduled across restarts.</span>
+        <button class="btn btn-secondary btn-sm" id="btn-refresh-schedules" title="Reload from disk">🔄 Refresh</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ═══ Scripts ═══ -->
   <script src="../node_modules/sortablejs/Sortable.min.js"></script>

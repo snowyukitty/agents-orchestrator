@@ -7,7 +7,10 @@ export class ExecutionEngine {
   constructor() {
     this.running = false;
     this.aborted = false;
-    this.currentProcessId = null;
+    this.runId = null;
+    this.currentProcessId = null;   // the PTY currently targeted by input/keypress
+    this._procSeq = 0;
+    this._spawnedIds = new Set();   // every PTY this run spawned (for abort cleanup)
     this.currentBlockIndex = -1;
     this.cwd = null;
 
@@ -27,9 +30,11 @@ export class ExecutionEngine {
     this.running = true;
     this.aborted = false;
     this.cwd = defaultCwd || '.';
-    this.currentProcessId = `proc-${Date.now()}`;
+    this.runId = `run-${Date.now()}`;
+    this.currentProcessId = null;
+    this._procSeq = 0;
+    this._spawnedIds = new Set();
 
-    this._setupProcessListeners();
     this._setStatus('running');
     this._log('▶ Workflow execution started', 'system');
     this._log(`  Working directory: ${this.cwd}`, 'system');
@@ -63,7 +68,6 @@ export class ExecutionEngine {
     } finally {
       this.running = false;
       this.currentBlockIndex = -1;
-      this._cleanupProcessListeners();
       this._setStatus(success ? 'completed' : 'error');
       this._log(
         `\n${success ? '✅ Workflow completed successfully' : '❌ Workflow failed'}`,
@@ -75,8 +79,9 @@ export class ExecutionEngine {
 
   abort() {
     this.aborted = true;
-    if (this.currentProcessId) {
-      window.api.killProcess({ id: this.currentProcessId }).catch(() => {});
+    // Kill every PTY this run spawned, not just the latest one.
+    for (const id of this._spawnedIds) {
+      window.api.killProcess({ id }).catch(() => {});
     }
     this._log('🛑 Abort requested...', 'system');
   }
@@ -119,11 +124,17 @@ export class ExecutionEngine {
 
       this._log(`⌨️  $ ${cmd}`, 'input-echo');
 
+      // Each command gets its own PTY id so multiple command blocks don't
+      // collide on a single shared id (which would orphan earlier PTYs).
+      const procId = `${this.runId}-c${++this._procSeq}`;
+      this.currentProcessId = procId;
+      this._spawnedIds.add(procId);
+
       const termCols = (window.app && window.app.term) ? window.app.term.cols : 80;
       const termRows = (window.app && window.app.term) ? window.app.term.rows : 24;
 
       const result = await window.api.executeCommand({
-        id: this.currentProcessId,
+        id: procId,
         command: cmd,
         cwd: this.cwd,
         cols: termCols,
@@ -136,9 +147,9 @@ export class ExecutionEngine {
 
       this._log(`   PID: ${result.pid}`, 'system');
 
-      // Register the process so the terminal stays interactive
+      // Route the terminal's keystrokes + output to this freshly spawned PTY.
       if (window.app) {
-        window.app.activeProcessId = this.currentProcessId;
+        window.app.activeProcessId = procId;
       }
 
       // Give the process a moment to initialize
@@ -246,39 +257,22 @@ export class ExecutionEngine {
     },
   };
 
-  // ── Process Event Listeners ────────────────────────────────
+  // ── Process Event Hooks ────────────────────────────────────
+  // The app owns the (single, persistent) IPC listeners and forwards
+  // relevant events here. The engine no longer registers its own IPC
+  // listeners — doing so previously caused the app's terminal listener
+  // to be torn down by removeAllListeners(), and double-wrote PTY output.
 
-  _setupProcessListeners() {
-    this._onOutput = (data) => {
-      if (data.id === this.currentProcessId) {
-        this._log(data.data, data.stream);
-      }
-    };
-
-    this._onExit = (data) => {
-      if (data.id === this.currentProcessId) {
-        this._log(`\n⬡ Process exited (code ${data.code})`, 'system');
-        if (window.app) {
-          window.app.activeProcessId = null;
-        }
-      }
-    };
-
-    this._onError = (data) => {
-      if (data.id === this.currentProcessId) {
-        this._log(`❌ Process error: ${data.error}`, 'stderr');
-      }
-    };
-
-    window.api.onProcessOutput(this._onOutput);
-    window.api.onProcessExit(this._onExit);
-    window.api.onProcessError(this._onError);
+  handleProcessExit(data) {
+    if (this.running && data.id === this.currentProcessId) {
+      this._log(`\n⬡ Process exited (code ${data.code})`, 'system');
+    }
   }
 
-  _cleanupProcessListeners() {
-    window.api.removeAllListeners('process-output');
-    window.api.removeAllListeners('process-exit');
-    window.api.removeAllListeners('process-error');
+  handleProcessError(data) {
+    if (this.running && data.id === this.currentProcessId) {
+      this._log(`❌ Process error: ${data.error}`, 'stderr');
+    }
   }
 
   // ── Utilities ──────────────────────────────────────────────

@@ -1,17 +1,41 @@
 // ============================================================
-// Snowy Agent Orchestrator — Electron Main Process
+// Agents Orchestrator — Electron Main Process
 // System Tray Application with Process Automation
 // ============================================================
-const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, nativeImage, powerMonitor, powerSaveBlocker } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const pty = require('node-pty');
 
+// ── Timestamped Logging ──────────────────────────────────────
+// Prefix every main-process console line with a local HH:MM:SS.mmm
+// timestamp so logs are correlatable with the renderer's Log pane.
+(() => {
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  const stamp = () => {
+    const d = new Date();
+    return `[${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}]`;
+  };
+  for (const level of ['log', 'warn', 'error']) {
+    const orig = console[level].bind(console);
+    console[level] = (...args) => orig(stamp(), ...args);
+  }
+})();
+
 // ── GPU Compatibility Fix (prevents invisible windows on some Windows machines)
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('disable-software-rasterizer');
+
+// ── Keep the scheduler alive when minimized / in tray / screen locked ──
+// Chromium otherwise throttles background/occluded renderers (timers drop to
+// ~1/minute), which makes scheduled runs miss their trigger window. These
+// switches + backgroundThrottling:false + a main-process heartbeat keep the
+// renderer's scheduler ticking whenever the machine is awake.
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 let mainWindow;
 let tray;
@@ -37,6 +61,13 @@ function getTrayIcon() {
 }
 
 function getWindowIcon() {
+  // Prefer the multi-size .ico on Windows (sharp taskbar/title-bar icon),
+  // fall back to the PNG everywhere else.
+  const icoPath = path.join(__dirname, 'src', 'assets', 'icon.ico');
+  if (process.platform === 'win32' && fs.existsSync(icoPath)) {
+    const img = nativeImage.createFromPath(icoPath);
+    if (!img.isEmpty()) return img;
+  }
   const iconPath = path.join(__dirname, 'src', 'assets', 'icon.png');
   if (fs.existsSync(iconPath)) {
     return nativeImage.createFromPath(iconPath);
@@ -62,6 +93,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false, // keep timers full-speed when hidden/locked
     }
   });
 
@@ -104,7 +136,7 @@ function createTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: '🧊 Snowy Agent Orchestrator',
+      label: '🎛️ Agents Orchestrator',
       enabled: false,
     },
     { type: 'separator' },
@@ -135,7 +167,7 @@ function createTray() {
     }
   ]);
 
-  tray.setToolTip('Snowy Agent Orchestrator');
+  tray.setToolTip('Agents Orchestrator');
   tray.setContextMenu(contextMenu);
 
   // Left-click on tray icon shows/focuses window
@@ -158,7 +190,33 @@ app.whenReady().then(() => {
   console.log('[Main] App ready, creating window and tray...');
   createWindow();
   createTray();
+  startSchedulerHeartbeat();
 });
+
+// ── Scheduler Heartbeat ──────────────────────────────────────
+// A main-process (Node) timer is NOT subject to Chromium's renderer
+// throttling, so it reliably fires even when the window is hidden in the
+// tray or the screen is locked (as long as the machine is awake). It nudges
+// the renderer to re-evaluate its schedules every few seconds.
+function startSchedulerHeartbeat() {
+  const tick = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('scheduler-tick');
+    }
+  };
+  setInterval(tick, 5000);
+
+  // After the system wakes from sleep, immediately re-check (a run may be due).
+  try {
+    powerMonitor.on('resume', () => {
+      console.log('[Main] System resumed from sleep — re-checking schedules');
+      tick();
+    });
+    powerMonitor.on('unlock-screen', () => tick());
+  } catch (e) {
+    console.warn(`[Main] powerMonitor unavailable: ${e.message}`);
+  }
+}
 
 app.on('window-all-closed', () => {
   // On Windows, don't quit when all windows are closed (tray keeps running)
@@ -185,12 +243,29 @@ ipcMain.handle('execute-command', async (_event, { id, command, cwd, cols = 80, 
   try {
     console.log(`[IPC] execute-command: "${command}" in "${cwd}"`);
 
+    // If a process is already registered under this id, kill it first so we
+    // never overwrite the Map entry and orphan the old PTY.
+    const existing = activeProcesses.get(id);
+    if (existing) {
+      try { existing.kill(); } catch (e) { /* ignore */ }
+      activeProcesses.delete(id);
+    }
+
+    // Validate the working directory — a missing path makes ConPTY fail with
+    // "Cannot create process, error code: 267" and leaves a dead terminal.
+    let workingDir = cwd;
+    if (!workingDir || !fs.existsSync(workingDir)) {
+      const fallback = app.getPath('home');
+      if (workingDir) console.warn(`[IPC] cwd not found: "${workingDir}" — falling back to "${fallback}"`);
+      workingDir = fallback;
+    }
+
     // Using node-pty with ConPTY (wmux-inspired config)
     const proc = pty.spawn('powershell.exe', ['-NoExit', '-Command', command], {
       name: 'xterm-color',
       cols: cols,
       rows: rows,
-      cwd: cwd || __dirname,
+      cwd: workingDir,
       env: process.env,
       useConpty: true,
       conptyInheritCursor: true
@@ -257,6 +332,38 @@ ipcMain.handle('kill-process', async (_event, { id }) => {
     return true;
   }
   return false;
+});
+
+// ── IPC: Keep Awake (power save blocker) ─────────────────────
+// The renderer requests this ON while any future scheduled run is pending,
+// so the machine won't sleep through a scheduled time. The display is still
+// allowed to turn off ('prevent-app-suspension'), only system sleep is held.
+let keepAwakeId = null;
+ipcMain.handle('set-keep-awake', async (_event, { on }) => {
+  if (on) {
+    if (keepAwakeId === null || !powerSaveBlocker.isStarted(keepAwakeId)) {
+      keepAwakeId = powerSaveBlocker.start('prevent-app-suspension');
+      console.log(`[IPC] keep-awake ON (blocker ${keepAwakeId}) — system sleep held for pending schedule`);
+    }
+  } else if (keepAwakeId !== null && powerSaveBlocker.isStarted(keepAwakeId)) {
+    powerSaveBlocker.stop(keepAwakeId);
+    console.log(`[IPC] keep-awake OFF (blocker ${keepAwakeId})`);
+    keepAwakeId = null;
+  }
+  return keepAwakeId !== null;
+});
+
+// ── IPC: Kill All Processes ──────────────────────────────────
+// Used at the start of a run to clear the default shell and any
+// leftover processes from previous runs, preventing PTY leaks.
+ipcMain.handle('kill-all-processes', async () => {
+  let count = 0;
+  activeProcesses.forEach((proc, id) => {
+    try { proc.kill('SIGTERM'); count++; } catch (e) { /* ignore */ }
+  });
+  activeProcesses.clear();
+  if (count) console.log(`[IPC] kill-all-processes: terminated ${count} process(es)`);
+  return count;
 });
 
 // ── IPC: Save Workflow ───────────────────────────────────────
