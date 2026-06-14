@@ -115,6 +115,7 @@ class App {
     this._initResizer();
     this._initEngine();
     this._initScheduler();
+    this._initSleep();
     this._updateEmptyState();
   }
 
@@ -936,6 +937,54 @@ class App {
       this._keepAwake = wantAwake;
       window.api.setKeepAwake(wantAwake).catch(() => {});
     }
+  }
+
+  // ── Delayed Hibernate Countdown ────────────────────────────
+  // A Hibernate block arms a delayed system hibernate in the main process.
+  // Here we mirror the armed state as a toolbar banner with a live countdown
+  // and a force-cancel button. The authoritative timer lives in main.js.
+
+  _initSleep() {
+    this._sleepTarget = null;     // epoch ms when hibernate fires (null = none)
+
+    document.getElementById('btn-cancel-sleep')?.addEventListener('click', async () => {
+      const wasArmed = await window.api.cancelSleep().catch(() => false);
+      this._sleepTarget = null;
+      this._renderSleepBanner();
+      if (wasArmed) this._appendLog('🚫 Pending hibernate cancelled by user.', 'system');
+    });
+
+    // Main process pushes state whenever hibernate is armed / cancelled / fired.
+    window.api.onSleepState((state) => {
+      this._sleepTarget = state?.target ?? null;
+      this._renderSleepBanner();
+    });
+
+    // Re-sync in case hibernate was armed before this renderer (re)loaded.
+    window.api.getSleepState?.().then((state) => {
+      this._sleepTarget = state?.target ?? null;
+      this._renderSleepBanner();
+    }).catch(() => {});
+
+    // Smooth 1s countdown (backgroundThrottling is off, so this keeps ticking
+    // when hidden). The actual hibernate is fired by the main-process timer.
+    this._sleepTicker = setInterval(() => this._renderSleepBanner(), 1000);
+    this._renderSleepBanner();
+  }
+
+  _renderSleepBanner() {
+    const banner = document.getElementById('sleep-banner');
+    if (!banner) return;
+
+    const remaining = this._sleepTarget != null ? this._sleepTarget - Date.now() : -1;
+    if (this._sleepTarget == null || remaining <= 0) {
+      banner.classList.add('hidden');
+      return;
+    }
+
+    banner.classList.remove('hidden');
+    const cd = document.getElementById('sleep-countdown');
+    if (cd) cd.textContent = this._formatCountdown(remaining);
   }
 
   _esc(str) {

@@ -353,6 +353,65 @@ ipcMain.handle('set-keep-awake', async (_event, { on }) => {
   return keepAwakeId !== null;
 });
 
+// ── IPC: Delayed System Hibernate ────────────────────────────
+// The renderer arms a delayed hibernate (e.g. "hibernate in 5 min") via a
+// Hibernate block — used to save power after an agent run finishes. The timer
+// lives HERE in the main process (a Node timer isn't throttled by Chromium),
+// so it fires reliably even when the window is hidden in the tray. The
+// renderer shows a live countdown and can force-cancel it.
+//
+// Hibernate (`shutdown /h`) is deliberate: it has single, predictable
+// behavior, unlike SetSuspendState which silently hibernates anyway when
+// system hibernation is enabled.
+let sleepTimer = null;
+let sleepTarget = null;     // epoch ms when hibernate fires (null = none armed)
+
+function broadcastSleepState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sleep-state', { target: sleepTarget });
+  }
+}
+
+function runHibernate() {
+  // Release any sleep-blocker first so hibernate isn't held off.
+  if (keepAwakeId !== null && powerSaveBlocker.isStarted(keepAwakeId)) {
+    powerSaveBlocker.stop(keepAwakeId);
+    keepAwakeId = null;
+  }
+  try {
+    spawn('shutdown', ['/h'], { windowsHide: true });
+    console.log('[Hibernate] Triggered system hibernate');
+  } catch (err) {
+    console.error(`[Hibernate] Failed: ${err.message}`);
+  }
+}
+
+ipcMain.handle('arm-sleep', async (_event, { delayMs }) => {
+  if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null; }
+  const ms = Math.max(0, Number(delayMs) || 0);
+  sleepTarget = Date.now() + ms;
+  console.log(`[Hibernate] Armed: in ${Math.round(ms / 1000)}s`);
+  sleepTimer = setTimeout(() => {
+    sleepTimer = null;
+    sleepTarget = null;
+    broadcastSleepState();
+    runHibernate();
+  }, ms);
+  broadcastSleepState();
+  return { target: sleepTarget };
+});
+
+ipcMain.handle('cancel-sleep', async () => {
+  if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null; }
+  const wasArmed = sleepTarget !== null;
+  sleepTarget = null;
+  if (wasArmed) console.log('[Hibernate] Cancelled by user');
+  broadcastSleepState();
+  return wasArmed;
+});
+
+ipcMain.handle('get-sleep-state', async () => ({ target: sleepTarget }));
+
 // ── IPC: Kill All Processes ──────────────────────────────────
 // Used at the start of a run to clear the default shell and any
 // leftover processes from previous runs, preventing PTY leaks.

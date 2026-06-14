@@ -13,6 +13,14 @@ contextBridge.exposeInMainWorld('api', {
   setKeepAwake: (on) => ipcRenderer.invoke('set-keep-awake', { on }),
   resizeProcess: (params) => ipcRenderer.invoke('resize-process', params),
 
+  // Delayed system hibernate
+  armSleep: (params) => ipcRenderer.invoke('arm-sleep', params),
+  cancelSleep: () => ipcRenderer.invoke('cancel-sleep'),
+  getSleepState: () => ipcRenderer.invoke('get-sleep-state'),
+  onSleepState: (callback) => {
+    ipcRenderer.on('sleep-state', (_event, data) => callback(data));
+  },
+
   // Workflow persistence
   saveWorkflow: (params) => ipcRenderer.invoke('save-workflow', params),
   loadWorkflow: (params) => ipcRenderer.invoke('load-workflow', params),

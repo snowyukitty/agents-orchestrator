@@ -116,6 +116,25 @@ export const BLOCK_TYPES = {
     params: [
       { key: 'message', label: 'Msg', type: 'text', placeholder: 'Log message...' }
     ]
+  },
+  sleep: {
+    type: 'sleep',
+    icon: '💤',
+    label: 'Hibernate PC',
+    description: 'Hibernate after delay (save power)',
+    color: 'sleep',
+    defaultParams: { delay: 5, unit: 'minutes' },
+    params: [
+      { key: 'delay', label: 'After', type: 'number', min: 0 },
+      {
+        key: 'unit', label: 'Unit', type: 'select',
+        options: [
+          { value: 'seconds', label: 'Seconds' },
+          { value: 'minutes', label: 'Minutes' },
+          { value: 'hours', label: 'Hours' }
+        ]
+      }
+    ]
   }
 };
 

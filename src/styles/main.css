@@ -57,6 +57,7 @@
   --block-keypress: #f97316;
   --block-loop: #ec4899;
   --block-log: #6b7280;
+  --block-sleep: #818cf8;
 
   /* Spacing scale */
   --sp-1: 4px;
@@ -265,6 +266,7 @@ html, body {
 .palette-block[data-type="keypress"]::before { background: var(--block-keypress); }
 .palette-block[data-type="loop"]::before     { background: var(--block-loop); }
 .palette-block[data-type="log"]::before      { background: var(--block-log); }
+.palette-block[data-type="sleep"]::before    { background: var(--block-sleep); }
 
 .palette-footer {
   padding: var(--sp-2) var(--sp-3);
@@ -458,6 +460,7 @@ html, body {
 .block-stripe.keypress  { background: var(--block-keypress); }
 .block-stripe.loop      { background: var(--block-loop); }
 .block-stripe.log       { background: var(--block-log); }
+.block-stripe.sleep     { background: var(--block-sleep); }
 
 /* Drag handle */
 .drag-handle {
@@ -776,6 +779,42 @@ html, body {
   padding: 0;
   min-height: 80px;
 }
+
+/* ── Sleep Countdown Banner ────────────────────────────────── */
+.sleep-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  background: linear-gradient(90deg, rgba(129, 140, 248, 0.18), rgba(129, 140, 248, 0.06));
+  border-bottom: 1px solid rgba(129, 140, 248, 0.35);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+  animation: sleepBannerIn 0.25s ease-out;
+}
+
+.sleep-banner.hidden { display: none; }
+
+@keyframes sleepBannerIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.sleep-banner-icon { font-size: 16px; }
+
+.sleep-banner-text b { color: var(--block-sleep); text-transform: capitalize; }
+
+.sleep-banner-countdown {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  color: var(--block-sleep);
+  letter-spacing: 0.5px;
+  min-width: 90px;
+}
+
+.sleep-banner #btn-cancel-sleep { margin-left: auto; }
 
 /* ── Bottom Toolbar ────────────────────────────────────────── */
 .toolbar {

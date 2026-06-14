@@ -255,6 +255,32 @@ export class ExecutionEngine {
       const msg = block.params.message || '';
       this._log(`📋 ${msg}`, 'system');
     },
+
+    async sleep(block) {
+      const delay = Number(block.params.delay) || 0;
+      const unit = block.params.unit || 'minutes';
+
+      let ms;
+      switch (unit) {
+        case 'seconds': ms = delay * 1_000; break;
+        case 'hours':   ms = delay * 3_600_000; break;
+        default:        ms = delay * 60_000;
+      }
+
+      // Arming is non-blocking: the workflow continues (or ends) while the
+      // main process holds an independent timer. The user can cancel from the
+      // toolbar banner before it fires.
+      this._log(
+        `💤 Hibernate armed — fires in ${delay} ${unit}. Cancel from the toolbar banner.`,
+        'system'
+      );
+
+      if (window.api && window.api.armSleep) {
+        await window.api.armSleep({ delayMs: ms });
+      } else {
+        this._log('⚠️ Hibernate API unavailable in this build', 'stderr');
+      }
+    },
   };
 
   // ── Process Event Hooks ────────────────────────────────────
