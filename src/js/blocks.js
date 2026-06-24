@@ -163,10 +163,10 @@ export function renderPaletteBlock(typeDef) {
   el.setAttribute('draggable', 'true');
 
   el.innerHTML = `
-    <span class="block-icon">${typeDef.icon}</span>
+    <span class="block-icon">${esc(typeDef.icon)}</span>
     <div class="block-info">
-      <div class="block-label">${typeDef.label}</div>
-      <div class="block-desc">${typeDef.description}</div>
+      <div class="block-label">${esc(typeDef.label)}</div>
+      <div class="block-desc">${esc(typeDef.description)}</div>
     </div>
   `;
   return el;
@@ -191,8 +191,8 @@ export function renderWorkflowBlock(block, index) {
     <div class="block-stripe ${block.type}"></div>
     <div class="block-content">
       <div class="block-header">
-        <span class="block-icon">${def.icon}</span>
-        <span class="block-type-label">${def.label}</span>
+        <span class="block-icon">${esc(def.icon)}</span>
+        <span class="block-type-label">${esc(def.label)}</span>
       </div>
       <div class="block-params">${paramsHtml}</div>
     </div>
@@ -208,59 +208,60 @@ export function renderWorkflowBlock(block, index) {
 // ── Parameter Field Builder ──────────────────────────────────
 function buildParamField(paramDef, params) {
   const value = params[paramDef.key] ?? '';
+  const key = esc(String(paramDef.key));
   let inputHtml;
 
   switch (paramDef.type) {
     case 'text':
-      inputHtml = `<input type="text" data-param="${paramDef.key}"
+      inputHtml = `<input type="text" data-param="${key}"
         value="${esc(String(value))}"
-        placeholder="${paramDef.placeholder || ''}"
+        placeholder="${esc(String(paramDef.placeholder || ''))}"
         spellcheck="false" />`;
       break;
 
     case 'number':
-      inputHtml = `<input type="number" data-param="${paramDef.key}"
-        value="${value}"
-        min="${paramDef.min ?? ''}" max="${paramDef.max ?? ''}" />`;
+      inputHtml = `<input type="number" data-param="${key}"
+        value="${esc(String(value))}"
+        min="${esc(String(paramDef.min ?? ''))}" max="${esc(String(paramDef.max ?? ''))}" />`;
       break;
 
     case 'datetime-local':
-      inputHtml = `<input type="datetime-local" data-param="${paramDef.key}"
-        value="${value}" />`;
+      inputHtml = `<input type="datetime-local" data-param="${key}"
+        value="${esc(String(value))}" />`;
       break;
 
     case 'select': {
       const opts = paramDef.options.map(o =>
-        `<option value="${o.value}" ${value === o.value ? 'selected' : ''}>${o.label}</option>`
+        `<option value="${esc(String(o.value))}" ${String(value) === String(o.value) ? 'selected' : ''}>${esc(o.label)}</option>`
       ).join('');
-      inputHtml = `<select data-param="${paramDef.key}">${opts}</select>`;
+      inputHtml = `<select data-param="${key}">${opts}</select>`;
       break;
     }
 
     case 'checkbox':
-      inputHtml = `<input type="checkbox" data-param="${paramDef.key}" ${value ? 'checked' : ''} />`;
+      inputHtml = `<input type="checkbox" data-param="${key}" ${value ? 'checked' : ''} />`;
       break;
 
     case 'directory':
       inputHtml = `
         <div class="param-dir-row">
-          <input type="text" data-param="${paramDef.key}"
+          <input type="text" data-param="${key}"
             value="${esc(String(value))}"
-            placeholder="${paramDef.placeholder || 'Select directory...'}"
+            placeholder="${esc(String(paramDef.placeholder || 'Select directory...'))}"
             spellcheck="false" />
           <button class="btn btn-icon btn-sm browse-dir-btn"
-            data-param="${paramDef.key}" title="Browse" type="button">📂</button>
+            data-param="${key}" title="Browse" type="button">📂</button>
         </div>`;
       break;
 
     default:
-      inputHtml = `<input type="text" data-param="${paramDef.key}"
+      inputHtml = `<input type="text" data-param="${key}"
         value="${esc(String(value))}" />`;
   }
 
   return `
     <div class="block-param">
-      <label>${paramDef.label}</label>
+      <label>${esc(paramDef.label)}</label>
       ${inputHtml}
     </div>
   `;

@@ -13,6 +13,7 @@ export class ExecutionEngine {
     this._spawnedIds = new Set();   // every PTY this run spawned (for abort cleanup)
     this.currentBlockIndex = -1;
     this.cwd = null;
+    this._abortLogged = false;
 
     // Callbacks — set these from the outside
     this.onLog = null;            // (message, type) => void
@@ -34,6 +35,7 @@ export class ExecutionEngine {
     this.currentProcessId = null;
     this._procSeq = 0;
     this._spawnedIds = new Set();
+    this._abortLogged = false;
 
     this._setStatus('running');
     this._log('▶ Workflow execution started', 'system');
@@ -44,7 +46,7 @@ export class ExecutionEngine {
     try {
       for (let i = 0; i < blocks.length; i++) {
         if (this.aborted) {
-          this._log('⛔ Workflow aborted by user', 'system');
+          this._logAbortOnce();
           success = false;
           break;
         }
@@ -57,6 +59,12 @@ export class ExecutionEngine {
 
         try {
           await this._executeBlock(block);
+          if (this.aborted) {
+            if (this.onBlockEnd) this.onBlockEnd(i, false);
+            this._logAbortOnce();
+            success = false;
+            break;
+          }
           if (this.onBlockEnd) this.onBlockEnd(i, true);
         } catch (err) {
           this._log(`❌ Error: ${err.message}`, 'stderr');
@@ -189,6 +197,10 @@ export class ExecutionEngine {
       const text = block.params.text || '';
       const pressEnter = block.params.pressEnter !== false;
 
+      if (!this.currentProcessId) {
+        throw new Error('No active process to receive input');
+      }
+
       this._log(
         `📝 Sending: "${text}"${pressEnter ? ' ⏎' : ''}`,
         'input-echo'
@@ -197,32 +209,40 @@ export class ExecutionEngine {
       // Simulate human typing so interactive CLIs don't drop fast chunks
       if (text) {
         for (const char of text) {
+          if (this.aborted) return;
           const sent = await window.api.sendInput({
             id: this.currentProcessId,
             text: char,
           });
           if (!sent) {
-            this._log('⚠️ No active process to receive input', 'stderr');
-            return;
+            throw new Error('No active process to receive input');
           }
           await this._sleep(75); // Slower typing (75ms) to give CLI event loops time to process
         }
       }
 
       if (pressEnter) {
+        if (this.aborted) return;
         // Send first Enter to confirm any potential autocomplete menu selection
-        await window.api.sendInput({
+        const firstEnter = await window.api.sendInput({
           id: this.currentProcessId,
           text: '\r',
         });
+        if (!firstEnter) {
+          throw new Error('No active process to receive Enter');
+        }
         
         await this._sleep(150); // Small wait for UI to update
+        if (this.aborted) return;
         
         // Send second Enter to actually submit the prompt
-        await window.api.sendInput({
+        const secondEnter = await window.api.sendInput({
           id: this.currentProcessId,
           text: '\r',
         });
+        if (!secondEnter) {
+          throw new Error('No active process to receive Enter');
+        }
       }
     },
 
@@ -240,10 +260,17 @@ export class ExecutionEngine {
 
       this._log(`🔑 Key: ${key}`, 'input-echo');
 
-      await window.api.sendInput({
+      if (!this.currentProcessId) {
+        throw new Error('No active process to receive keypress');
+      }
+
+      const sent = await window.api.sendInput({
         id: this.currentProcessId,
         text: char,
       });
+      if (!sent) {
+        throw new Error('No active process to receive keypress');
+      }
     },
 
     loop(block) {
@@ -305,6 +332,12 @@ export class ExecutionEngine {
 
   _sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
+  }
+
+  _logAbortOnce() {
+    if (this._abortLogged) return;
+    this._abortLogged = true;
+    this._log('⛔ Workflow aborted by user', 'system');
   }
 
   _log(message, type = 'stdout') {

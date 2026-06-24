@@ -40,6 +40,22 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 let mainWindow;
 let tray;
 const activeProcesses = new Map();
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+function isDirectory(dir) {
+  try {
+    return !!dir && fs.statSync(dir).isDirectory();
+  } catch (_e) {
+    return false;
+  }
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
 
 // ── Tray Icon ────────────────────────────────────────────────
 function getTrayIcon() {
@@ -143,10 +159,7 @@ function createTray() {
     {
       label: '📋 Show Window',
       click: () => {
-        if (mainWindow) {
-          mainWindow.show();
-          mainWindow.focus();
-        }
+        showMainWindow();
       }
     },
     {
@@ -172,26 +185,28 @@ function createTray() {
 
   // Left-click on tray icon shows/focuses window
   tray.on('click', () => {
-    if (mainWindow) {
-      if (mainWindow.isVisible()) {
-        mainWindow.focus();
-      } else {
-        mainWindow.show();
-        mainWindow.focus();
-      }
-    }
+    showMainWindow();
   });
 
   console.log('[Main] System tray created');
 }
 
 // ── App Lifecycle ────────────────────────────────────────────
-app.whenReady().then(() => {
-  console.log('[Main] App ready, creating window and tray...');
-  createWindow();
-  createTray();
-  startSchedulerHeartbeat();
-});
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    console.log('[Main] Second instance requested; focusing existing window');
+    showMainWindow();
+  });
+
+  app.whenReady().then(() => {
+    console.log('[Main] App ready, creating window and tray...');
+    createWindow();
+    createTray();
+    startSchedulerHeartbeat();
+  });
+}
 
 // ── Scheduler Heartbeat ──────────────────────────────────────
 // A main-process (Node) timer is NOT subject to Chromium's renderer
@@ -232,10 +247,7 @@ app.on('before-quit', () => {
 });
 
 app.on('activate', () => {
-  if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  showMainWindow();
 });
 
 // ── IPC: Execute Command ─────────────────────────────────────
@@ -254,7 +266,7 @@ ipcMain.handle('execute-command', async (_event, { id, command, cwd, cols = 80, 
     // Validate the working directory — a missing path makes ConPTY fail with
     // "Cannot create process, error code: 267" and leaves a dead terminal.
     let workingDir = cwd;
-    if (!workingDir || !fs.existsSync(workingDir)) {
+    if (!isDirectory(workingDir)) {
       const fallback = app.getPath('home');
       if (workingDir) console.warn(`[IPC] cwd not found: "${workingDir}" — falling back to "${fallback}"`);
       workingDir = fallback;
@@ -425,30 +437,62 @@ ipcMain.handle('kill-all-processes', async () => {
   return count;
 });
 
+// ── IPC: App Defaults ────────────────────────────────────────
+ipcMain.handle('get-default-directory', async () => app.getPath('home'));
+
 // ── IPC: Save Workflow ───────────────────────────────────────
+function workflowStoreDir() {
+  return path.join(app.getPath('userData'), 'workflows');
+}
+
+function safeWorkflowFileName(workflow) {
+  const rawId = typeof workflow?.id === 'string' && workflow.id.trim()
+    ? workflow.id.trim()
+    : `wf-${Date.now()}`;
+  const safeId = rawId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 96) || `wf-${Date.now()}`;
+  return `${safeId}.json`;
+}
+
+function readWorkflowFile(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const parsed = JSON.parse(raw);
+  return { file: path.basename(filePath), ...parsed };
+}
+
 ipcMain.handle('save-workflow', async (_event, { workflow, filePath }) => {
-  const dir = path.join(app.getPath('userData'), 'workflows');
+  if (!workflow || typeof workflow !== 'object') {
+    throw new Error('Workflow payload is invalid');
+  }
+
+  const dir = workflowStoreDir();
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const target = filePath || path.join(dir, `${workflow.id}.json`);
-  fs.writeFileSync(target, JSON.stringify(workflow, null, 2), 'utf-8');
+  const target = filePath || path.join(dir, safeWorkflowFileName(workflow));
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(workflow, null, 2), 'utf-8');
+  fs.renameSync(tmp, target);
   return target;
 });
 
 // ── IPC: Load Workflow ───────────────────────────────────────
 ipcMain.handle('load-workflow', async (_event, { filePath }) => {
   if (filePath) {
-    const data = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(data);
+    return readWorkflowFile(filePath);
   }
-  const dir = path.join(app.getPath('userData'), 'workflows');
+  const dir = workflowStoreDir();
   if (!fs.existsSync(dir)) return [];
   const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
-  return files.map(f => {
-    const raw = fs.readFileSync(path.join(dir, f), 'utf-8');
-    return { file: f, ...JSON.parse(raw) };
-  });
+  const workflows = [];
+  for (const file of files) {
+    const fullPath = path.join(dir, file);
+    try {
+      workflows.push(readWorkflowFile(fullPath));
+    } catch (err) {
+      console.warn(`[IPC] Skipping unreadable workflow "${file}": ${err.message}`);
+    }
+  }
+  return workflows;
 });
 
 // ── IPC: Directory Picker ────────────────────────────────────

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "check": "node --check main.js && node --check preload.js && node --check src/js/app.js && node --check src/js/engine.js && node --check src/js/blocks.js && node --check scripts/build-icons.js && node --check scripts/create-icon.js",
     "icons": "electron scripts/build-icons.js",
     "build": "electron-packager . AgentsOrchestrator --platform=win32 --arch=x64 --overwrite --out=dist --icon=src/assets/icon.ico --ignore=\"(dist|scripts|icon-source\\.png|\\.gitignore)\" --asar.unpackDir=node_modules/node-pty"
   },

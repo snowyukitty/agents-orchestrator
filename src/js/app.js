@@ -4,7 +4,7 @@
 // ============================================================
 
 import {
-  BLOCK_TYPES, createBlock,
+  BLOCK_TYPES, createBlock, generateBlockId,
   renderPaletteBlock, renderWorkflowBlock
 } from './blocks.js';
 
@@ -12,19 +12,21 @@ import { ExecutionEngine } from './engine.js';
 
 class App {
   constructor() {
+    this._defaultDirectory = '.';
     /** @type {{ id: string, name: string, defaultDirectory: string, blocks: Array }} */
-    this.workflow = {
+    this.workflow = this._normalizeWorkflow({
       id: `wf-${Date.now()}`,
       name: 'New Workflow',
-      defaultDirectory: 'D:\\AI_Projects\\agents-orchestrator',
+      defaultDirectory: this._defaultDirectory,
       blocks: [],
-    };
+    });
 
     this.engine = new ExecutionEngine();
     this.sortable = null;
 
     this._init();
     this._loadDemoWorkflow();
+    this._loadDefaultDirectory();
   }
 
   // ── Demo Cases ─────────────────────────────────────────────
@@ -36,44 +38,35 @@ class App {
     if (demos.length > 0) {
       // Load the first demo by default
       const demo = demos[0];
-      this.workflow.name = demo.name;
-      this.workflow.defaultDirectory = demo.defaultDirectory;
-      this.workflow.blocks = demo.blocks;
+      this.workflow = this._normalizeWorkflow({
+        ...this.workflow,
+        name: demo.name,
+        defaultDirectory: demo.defaultDirectory,
+        blocks: demo.blocks,
+      });
       document.getElementById('workflow-name').value = demo.name;
       this.renderBlocks();
+      this._onWorkflowChanged();
     }
   }
 
-  // Format a Date as the value expected by <input type="datetime-local">.
-  _toDatetimeLocal(d) {
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-  }
-
-  // The next occurrence of a given clock time (today if still ahead, else tomorrow).
-  _nextDailyTime(hour, minute) {
-    const now = new Date();
-    const t = new Date();
-    t.setHours(hour, minute, 0, 0);
-    if (t.getTime() <= now.getTime()) t.setDate(t.getDate() + 1);
-    return t;
-  }
-
   _getDemoCases() {
+    const defaultDirectory = this._defaultDirectory || '.';
     return [
       {
         name: 'Demo: Claude Auto Session',
-        defaultDirectory: 'D:\\AI_Projects\\agents-orchestrator',
+        defaultDirectory,
         blocks: [
           {
             id: 'demo-1-schedule',
             type: 'schedule',
-            params: { datetime: this._toDatetimeLocal(this._nextDailyTime(2, 0)), mode: 'once' }
+            // Keep the demo manual-safe: no auto-run or keep-awake until the user sets a time.
+            params: { datetime: '', mode: 'once' }
           },
           {
             id: 'demo-1-dir',
             type: 'directory',
-            params: { path: 'D:\\AI_Projects\\agents-orchestrator' }
+            params: { path: defaultDirectory }
           },
           {
             id: 'demo-1-cmd',
@@ -117,6 +110,113 @@ class App {
     this._initScheduler();
     this._initSleep();
     this._updateEmptyState();
+  }
+
+  async _loadDefaultDirectory() {
+    try {
+      const dir = await window.api.getDefaultDirectory?.();
+      if (!dir) return;
+
+      this._defaultDirectory = dir;
+      const oldDevDir = 'D:\\AI_Projects\\agents-orchestrator';
+      const replaceDefaults = new Set(['', '.', oldDevDir]);
+
+      if (replaceDefaults.has(this.workflow.defaultDirectory)) {
+        this.workflow.defaultDirectory = dir;
+      }
+
+      let changed = false;
+      for (const block of this.workflow.blocks) {
+        if (block.type === 'directory' && replaceDefaults.has(block.params?.path || '')) {
+          block.params.path = dir;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        this.renderBlocks();
+        this._onWorkflowChanged();
+      }
+    } catch (e) {
+      console.warn('Failed to load default directory', e);
+    }
+  }
+
+  _normalizeWorkflow(data = {}) {
+    const source = data && typeof data === 'object' ? data : {};
+    const blocks = Array.isArray(source.blocks)
+      ? source.blocks.map(block => this._normalizeBlock(block)).filter(Boolean)
+      : [];
+
+    return {
+      id: this._safeId(source.id, `wf-${Date.now()}`),
+      name: typeof source.name === 'string' && source.name.trim()
+        ? source.name
+        : 'Untitled Workflow',
+      defaultDirectory: typeof source.defaultDirectory === 'string'
+        ? source.defaultDirectory
+        : this._defaultDirectory,
+      blocks,
+    };
+  }
+
+  _normalizeBlock(block) {
+    if (!block || typeof block !== 'object' || !BLOCK_TYPES[block.type]) {
+      return null;
+    }
+
+    const def = BLOCK_TYPES[block.type];
+    const params = { ...def.defaultParams };
+    const rawParams = block.params && typeof block.params === 'object' ? block.params : {};
+
+    for (const paramDef of def.params) {
+      if (!(paramDef.key in rawParams)) continue;
+      params[paramDef.key] = this._normalizeParamValue(paramDef, rawParams[paramDef.key], params[paramDef.key]);
+    }
+
+    return {
+      id: this._safeId(block.id, generateBlockId()),
+      type: block.type,
+      params,
+    };
+  }
+
+  _normalizeParamValue(paramDef, value, fallback) {
+    switch (paramDef.type) {
+      case 'number': {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        const min = Number.isFinite(Number(paramDef.min)) ? Number(paramDef.min) : -Infinity;
+        const max = Number.isFinite(Number(paramDef.max)) ? Number(paramDef.max) : Infinity;
+        return Math.min(max, Math.max(min, n));
+      }
+      case 'checkbox':
+        return Boolean(value);
+      case 'select':
+        return paramDef.options.some(option => String(option.value) === String(value))
+          ? String(value)
+          : fallback;
+      default:
+        return value == null ? '' : String(value);
+    }
+  }
+
+  _safeId(value, fallback) {
+    if (typeof value !== 'string' || !value.trim()) return fallback;
+    return /^[a-zA-Z0-9_-]+$/.test(value) ? value : fallback;
+  }
+
+  _cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === 'function') {
+      return window.CSS.escape(String(value));
+    }
+    return String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  _onWorkflowChanged() {
+    if (typeof this._rebuildJobs === 'function' && Array.isArray(this._scheduledJobs)) {
+      this._rebuildJobs();
+    }
   }
 
   // ── Palette (Left Panel) ───────────────────────────────────
@@ -178,6 +278,7 @@ class App {
     const nameInput = document.getElementById('workflow-name');
     nameInput.addEventListener('change', (e) => {
       this.workflow.name = e.target.value;
+      this._onWorkflowChanged();
     });
 
     // Clear all
@@ -186,6 +287,7 @@ class App {
       if (confirm('Remove all blocks from this workflow?')) {
         this.workflow.blocks = [];
         this.renderBlocks();
+        this._onWorkflowChanged();
       }
     });
   }
@@ -208,7 +310,8 @@ class App {
 
     document.getElementById('btn-clear-log').addEventListener('click', () => {
       const log = document.getElementById('output-log');
-      log.innerHTML = '<div class="log-line system">🧹 Log cleared.</div>';
+      log.innerHTML = '';
+      this._appendLog('🧹 Log cleared.', 'system');
     });
 
     document.getElementById('btn-clear-terminal').addEventListener('click', () => {
@@ -305,6 +408,7 @@ class App {
     }
 
     this.renderBlocks();
+    this._onWorkflowChanged();
     this._scrollToBlock(block.id);
     return block;
   }
@@ -312,6 +416,7 @@ class App {
   removeBlock(id) {
     this.workflow.blocks = this.workflow.blocks.filter(b => b.id !== id);
     this.renderBlocks();
+    this._onWorkflowChanged();
   }
 
   duplicateBlock(id) {
@@ -324,6 +429,7 @@ class App {
 
     this.workflow.blocks.splice(idx + 1, 0, copy);
     this.renderBlocks();
+    this._onWorkflowChanged();
     this._scrollToBlock(copy.id);
   }
 
@@ -371,6 +477,7 @@ class App {
         } else {
           block.params[key] = input.value;
         }
+        if (block.type === 'schedule') this._onWorkflowChanged();
       };
       input.addEventListener('change', handler);
       if (input.type === 'text' || input.tagName === 'TEXTAREA') {
@@ -387,6 +494,7 @@ class App {
           block.params[key] = dir;
           const input = el.querySelector(`input[data-param="${key}"]`);
           if (input) input.value = dir;
+          if (block.type === 'schedule') this._onWorkflowChanged();
         }
       });
     });
@@ -425,6 +533,7 @@ class App {
 
         // Re-render to fix connectors and step numbers
         this.renderBlocks();
+        this._onWorkflowChanged();
       }
     });
   }
@@ -468,7 +577,17 @@ class App {
     dot.className = 'status-indicator running';
 
     // Go!
-    await this.engine.execute(this.workflow.blocks, this.workflow.defaultDirectory);
+    try {
+      await this.engine.execute(this.workflow.blocks, this.workflow.defaultDirectory);
+    } catch (err) {
+      this._termLog(`❌ Run failed: ${err.message}`, 'stderr');
+      document.getElementById('btn-run').classList.remove('hidden');
+      document.getElementById('btn-stop').classList.add('hidden');
+      badge.textContent = 'Error';
+      badge.className = 'workflow-status error';
+      dot.className = 'status-indicator error';
+      document.getElementById('status-text').textContent = 'Failed';
+    }
   }
 
   _syncParams() {
@@ -494,7 +613,13 @@ class App {
 
   async saveWorkflow() {
     this._syncParams();
-    this.workflow.name = document.getElementById('workflow-name').value;
+    this.workflow = this._normalizeWorkflow({
+      ...this.workflow,
+      name: document.getElementById('workflow-name').value,
+    });
+    document.getElementById('workflow-name').value = this.workflow.name;
+    this.renderBlocks();
+    this._onWorkflowChanged();
 
     try {
       const path = await window.api.saveWorkflow({ workflow: this.workflow });
@@ -513,10 +638,11 @@ class App {
       const data = await window.api.loadWorkflow({ filePath });
       if (!data) return;
 
-      this.workflow = data;
-      document.getElementById('workflow-name').value = data.name || 'Loaded';
+      this.workflow = this._normalizeWorkflow(data);
+      document.getElementById('workflow-name').value = this.workflow.name || 'Loaded';
       this.renderBlocks();
-      this._termLog(`📂 Loaded: ${data.name} (${data.blocks?.length || 0} blocks)`, 'system');
+      this._onWorkflowChanged();
+      this._termLog(`📂 Loaded: ${this.workflow.name} (${this.workflow.blocks.length} blocks)`, 'system');
     } catch (err) {
       this._termLog(`❌ Load failed: ${err.message}`, 'stderr');
     }
@@ -524,6 +650,10 @@ class App {
 
   async exportWorkflow() {
     this._syncParams();
+    this.workflow = this._normalizeWorkflow(this.workflow);
+    document.getElementById('workflow-name').value = this.workflow.name;
+    this.renderBlocks();
+    this._onWorkflowChanged();
 
     try {
       const filePath = await window.api.saveFileDialog();
@@ -622,7 +752,7 @@ class App {
       const result = await window.api.executeCommand({
         id: 'default-shell-' + Date.now(),
         command: '', // Empty command drops into an interactive PowerShell session
-        cwd: this.workflow?.defaultDirectory || 'D:\\AI_Projects\\agents-orchestrator',
+        cwd: this.workflow?.defaultDirectory || this._defaultDirectory || '.',
         cols: this.term.cols,
         rows: this.term.rows
       });
@@ -726,7 +856,7 @@ class App {
   // Tracks EVERY scheduled workflow (saved on disk + the one being edited),
   // shows a live per-workflow countdown, and auto-runs each when its time
   // arrives. A workflow is "scheduled" when it contains a Schedule block
-  // with a datetime (by convention, as its first block).
+  // with a datetime.
 
   _initScheduler() {
     this._scheduledJobs = [];   // [{ id, name, datetime, mode, workflow, isCurrent }]
@@ -767,7 +897,9 @@ class App {
   async _refreshScheduledJobs() {
     try {
       const all = await window.api.loadWorkflow({});
-      this._diskJobs = (Array.isArray(all) ? all : []).filter(wf => this._scheduleOf(wf));
+      this._diskJobs = (Array.isArray(all) ? all : [])
+        .map(wf => this._normalizeWorkflow(wf))
+        .filter(wf => this._scheduleOf(wf));
     } catch (e) {
       this._diskJobs = [];
     }
@@ -861,7 +993,7 @@ class App {
 
   _runScheduledJob(job) {
     // Load the scheduled workflow into the editor, then run it.
-    const wf = JSON.parse(JSON.stringify(job.workflow));
+    const wf = this._normalizeWorkflow(JSON.parse(JSON.stringify(job.workflow)));
     this.workflow = wf;
     const nameInput = document.getElementById('workflow-name');
     if (nameInput) nameInput.value = wf.name || 'Scheduled';
@@ -878,7 +1010,7 @@ class App {
     if (!list) return;
 
     if (this._scheduledJobs.length === 0) {
-      list.innerHTML = `<div class="sched-empty">No scheduled workflows yet.<br>Add a <strong>Schedule</strong> block as the first step, set a time, and Save.</div>`;
+      list.innerHTML = `<div class="sched-empty">No scheduled workflows yet.<br>Add a <strong>Schedule</strong> block, set a time, and Save.</div>`;
       this._renderCountdowns(Date.now());
       return;
     }
@@ -913,7 +1045,7 @@ class App {
       const remaining = target - now;
       const running = !!(this.engine?.isRunning && this.workflow?.id === job.id);
       const passed = job.mode !== 'cron' && now > target + this._graceMs;
-      const sel = `[data-job-id="${CSS.escape(job.id)}"]`;
+      const sel = `[data-job-id="${this._cssEscape(job.id)}"]`;
       const cdEl = document.querySelector(`#schedule-list .sched-countdown${sel}`);
       const stEl = document.querySelector(`#schedule-list .sched-state${sel}`);
 
@@ -1046,7 +1178,7 @@ class App {
 
   _scrollToBlock(id) {
     requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-block-id="${id}"]`);
+      const el = document.querySelector(`[data-block-id="${this._cssEscape(id)}"]`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   }

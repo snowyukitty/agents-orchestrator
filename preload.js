@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('api', {
   killAllProcesses: () => ipcRenderer.invoke('kill-all-processes'),
   setKeepAwake: (on) => ipcRenderer.invoke('set-keep-awake', { on }),
   resizeProcess: (params) => ipcRenderer.invoke('resize-process', params),
+  getDefaultDirectory: () => ipcRenderer.invoke('get-default-directory'),
 
   // Delayed system hibernate
   armSleep: (params) => ipcRenderer.invoke('arm-sleep', params),
@@ -48,6 +49,15 @@ contextBridge.exposeInMainWorld('api', {
 
   // Cleanup
   removeAllListeners: (channel) => {
-    ipcRenderer.removeAllListeners(channel);
+    const allowed = new Set([
+      'process-output',
+      'process-exit',
+      'process-error',
+      'scheduler-tick',
+      'sleep-state',
+    ]);
+    if (allowed.has(channel)) {
+      ipcRenderer.removeAllListeners(channel);
+    }
   }
 });
