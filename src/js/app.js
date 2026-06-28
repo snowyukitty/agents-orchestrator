@@ -5,7 +5,7 @@
 
 import {
   BLOCK_TYPES, createBlock, generateBlockId,
-  renderPaletteBlock, renderWorkflowBlock
+  currentDateTimeLocalValue, renderPaletteBlock, renderWorkflowBlock
 } from './blocks.js';
 
 import { ExecutionEngine } from './engine.js';
@@ -47,11 +47,13 @@ class App {
       document.getElementById('workflow-name').value = demo.name;
       this.renderBlocks();
       this._onWorkflowChanged();
+      this._markScheduleBlockTargetHandled(this._scheduleOf(this.workflow));
     }
   }
 
   _getDemoCases() {
     const defaultDirectory = this._defaultDirectory || '.';
+    const defaultScheduleTime = currentDateTimeLocalValue();
     return [
       {
         name: 'Demo: Claude Auto Session',
@@ -60,8 +62,8 @@ class App {
           {
             id: 'demo-1-schedule',
             type: 'schedule',
-            // Keep the demo manual-safe: no auto-run or keep-awake until the user sets a time.
-            params: { datetime: '', mode: 'once' }
+            // Show a useful default without auto-running the demo on app start.
+            params: { datetime: defaultScheduleTime, mode: 'once' }
           },
           {
             id: 'demo-1-dir',
@@ -410,6 +412,7 @@ class App {
 
     this.renderBlocks();
     this._onWorkflowChanged();
+    this._markScheduleBlockTargetHandled(block);
     this._scrollToBlock(block.id);
     return block;
   }
@@ -1013,6 +1016,18 @@ class App {
     this.renderBlocks();
     document.getElementById('schedule-modal')?.classList.add('hidden');
     this.runWorkflow(`⏰ Scheduled run: "${wf.name}" @ ${new Date().toLocaleString()}`);
+  }
+
+  _markScheduleBlockTargetHandled(block) {
+    if (!block || block.type !== 'schedule' || !this.workflow || !Array.isArray(this._scheduledJobs)) return;
+    if (this._scheduleOf(this.workflow) !== block) return;
+    const target = this._jobTarget({
+      datetime: block.params?.datetime,
+      mode: block.params?.mode || 'once',
+    }, Date.now());
+    if (target > 0) {
+      this._firedTargets[this.workflow.id] = target;
+    }
   }
 
   _renderScheduleList() {

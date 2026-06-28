@@ -4,9 +4,13 @@ A desktop orchestrator application built with Electron, allowing users to automa
 
 ## Project Status
 
-**Version**: 0.1.1 MVP
+**Version**: 0.1.2 MVP
 
 ### Release Notes
+
+#### v0.1.2
+- Default/demo Schedule blocks now display the current local system time immediately.
+- Newly-created Schedule blocks still suppress the just-created current-minute target once, preventing accidental immediate auto-runs while keeping future edits schedulable.
 
 #### v0.1.1
 - Hardened app shutdown: quitting from the tray now stops the scheduler heartbeat, detaches power monitor listeners, cancels pending hibernate timers, releases the keep-awake blocker, tears down the tray, and terminates tracked PTYs through one idempotent cleanup path.
@@ -31,7 +35,7 @@ A desktop orchestrator application built with Electron, allowing users to automa
 - **Single-Instance Guard**: Electron's single-instance lock prevents duplicate tray apps, duplicate scheduler ticks, and conflicting hibernate timers. Launching a second instance focuses the existing window instead.
 - **Input Simulation**: Simulates human typing speeds for text input blocks to avoid characters being swallowed by async CLI UI redrawing loops.
 - **Scheduled Countdown Board**: A **⏱ Schedules** panel lists every scheduled workflow (saved on disk + the one being edited), each with a **live countdown** to its next run. The bottom toolbar always shows "next in HH:MM:SS". Due `once` jobs auto-run at their time; `cron` mode repeats daily.
-- **Schedule Defaults**: Newly added Schedule blocks use the current local system time as their default trigger time, while loaded workflows preserve their saved schedule values.
+- **Schedule Defaults**: Default and newly added Schedule blocks use the current local system time as their trigger time, while loaded workflows preserve their saved schedule values.
 - **Delayed Hibernate (power saving)**: A **💤 Hibernate PC** block arms a delayed system hibernate (`shutdown /h`) after a configurable delay — e.g. ping an agent, then hibernate to save power once it's done. The timer lives in the main process so it fires reliably even when the window is minimized to the tray or the screen is locked. While armed, a top banner shows a **live countdown** with a **✕ Cancel hibernate** button to force-abort it. Arming is non-blocking, so it can sit at the end of a workflow.
 - **Timestamped Logs**: Every renderer Log line and every main-process console line is prefixed with an `HH:MM:SS.mmm` timestamp.
 - **Custom App Icon**: A real snowflake icon (PNG + multi-size Windows `.ico`) is used for the window, taskbar, tray, and packaged `.exe` — no default Electron icon. Regenerate from `src/assets/icon-source.png` with `npm run icons`.
