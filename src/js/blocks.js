@@ -145,13 +145,26 @@ export function generateBlockId() {
   return `blk-${Date.now()}-${++_idCounter}`;
 }
 
+function currentDateTimeLocalValue(date = new Date()) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function createDefaultParams(type, def) {
+  const params = { ...def.defaultParams };
+  if (type === 'schedule' && !params.datetime) {
+    params.datetime = currentDateTimeLocalValue();
+  }
+  return params;
+}
+
 export function createBlock(type) {
   const def = BLOCK_TYPES[type];
   if (!def) throw new Error(`Unknown block type: ${type}`);
   return {
     id: generateBlockId(),
     type,
-    params: { ...def.defaultParams }
+    params: createDefaultParams(type, def)
   };
 }
 

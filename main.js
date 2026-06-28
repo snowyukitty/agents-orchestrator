@@ -39,8 +39,16 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 let mainWindow;
 let tray;
+let schedulerHeartbeatTimer = null;
+let powerResumeHandler = null;
+let powerUnlockHandler = null;
+let cleanupComplete = false;
+let keepAwakeId = null;
+let sleepTimer = null;
+let sleepTarget = null; // epoch ms when hibernate fires (null = none armed)
 const activeProcesses = new Map();
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
+const isSmokeTest = process.argv.includes('--smoke-test');
 
 function isDirectory(dir) {
   try {
@@ -55,6 +63,21 @@ function showMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+function sendToRenderer(channel, payload) {
+  if (app.isQuitting || !mainWindow || mainWindow.isDestroyed()) return false;
+  const { webContents } = mainWindow;
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    webContents.send(channel, payload);
+    return true;
+  } catch (err) {
+    if (!app.isQuitting) {
+      console.warn(`[Main] Failed to send "${channel}": ${err.message}`);
+    }
+    return false;
+  }
 }
 
 // ── Tray Icon ────────────────────────────────────────────────
@@ -138,6 +161,13 @@ function createWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[Main] Page loaded successfully');
+    if (isSmokeTest) {
+      console.log('[Main] Smoke test loaded; quitting...');
+      setTimeout(() => {
+        app.isQuitting = true;
+        app.quit();
+      }, 1000);
+    }
   });
 
   if (process.argv.includes('--dev')) {
@@ -215,21 +245,88 @@ if (!gotSingleInstanceLock) {
 // the renderer to re-evaluate its schedules every few seconds.
 function startSchedulerHeartbeat() {
   const tick = () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('scheduler-tick');
-    }
+    sendToRenderer('scheduler-tick');
   };
-  setInterval(tick, 5000);
+  if (schedulerHeartbeatTimer) clearInterval(schedulerHeartbeatTimer);
+  schedulerHeartbeatTimer = setInterval(tick, 5000);
 
   // After the system wakes from sleep, immediately re-check (a run may be due).
   try {
-    powerMonitor.on('resume', () => {
+    powerResumeHandler = () => {
       console.log('[Main] System resumed from sleep — re-checking schedules');
       tick();
-    });
-    powerMonitor.on('unlock-screen', () => tick());
+    };
+    powerUnlockHandler = () => tick();
+    powerMonitor.on('resume', powerResumeHandler);
+    powerMonitor.on('unlock-screen', powerUnlockHandler);
   } catch (e) {
     console.warn(`[Main] powerMonitor unavailable: ${e.message}`);
+  }
+}
+
+function stopSchedulerHeartbeat() {
+  if (schedulerHeartbeatTimer) {
+    clearInterval(schedulerHeartbeatTimer);
+    schedulerHeartbeatTimer = null;
+  }
+  try {
+    if (powerResumeHandler) {
+      powerMonitor.removeListener('resume', powerResumeHandler);
+      powerResumeHandler = null;
+    }
+    if (powerUnlockHandler) {
+      powerMonitor.removeListener('unlock-screen', powerUnlockHandler);
+      powerUnlockHandler = null;
+    }
+  } catch (e) {
+    console.warn(`[Main] Failed to detach powerMonitor listeners: ${e.message}`);
+  }
+}
+
+function stopKeepAwake() {
+  if (keepAwakeId !== null && powerSaveBlocker.isStarted(keepAwakeId)) {
+    powerSaveBlocker.stop(keepAwakeId);
+    console.log(`[Main] keep-awake OFF (blocker ${keepAwakeId})`);
+  }
+  keepAwakeId = null;
+}
+
+function cancelSleepTimer({ broadcast = false } = {}) {
+  if (sleepTimer) {
+    clearTimeout(sleepTimer);
+    sleepTimer = null;
+  }
+  const wasArmed = sleepTarget !== null;
+  sleepTarget = null;
+  if (broadcast && wasArmed) broadcastSleepState();
+  return wasArmed;
+}
+
+function killAllActiveProcesses(reason = 'shutdown') {
+  const entries = Array.from(activeProcesses.entries());
+  activeProcesses.clear();
+  for (const [id, proc] of entries) {
+    console.log(`[Main] Killing process (${reason}): ${id}`);
+    try {
+      proc.kill('SIGTERM');
+    } catch (_e) {
+      try { process.kill(proc.pid, 'SIGTERM'); } catch (_e2) { /* ignore */ }
+    }
+  }
+  return entries.length;
+}
+
+function cleanupForQuit() {
+  if (cleanupComplete) return;
+  cleanupComplete = true;
+  app.isQuitting = true;
+  stopSchedulerHeartbeat();
+  cancelSleepTimer();
+  stopKeepAwake();
+  killAllActiveProcesses('shutdown');
+  if (tray) {
+    tray.destroy();
+    tray = null;
   }
 }
 
@@ -238,13 +335,8 @@ app.on('window-all-closed', () => {
   // Only quit if isQuitting flag is set
 });
 
-app.on('before-quit', () => {
-  // Kill all active child processes
-  activeProcesses.forEach((proc, id) => {
-    console.log(`[Main] Killing process: ${id}`);
-    try { proc.kill('SIGTERM'); } catch (e) { /* ignore */ }
-  });
-});
+app.on('before-quit', cleanupForQuit);
+app.on('will-quit', cleanupForQuit);
 
 app.on('activate', () => {
   showMainWindow();
@@ -286,18 +378,14 @@ ipcMain.handle('execute-command', async (_event, { id, command, cwd, cols = 80, 
     activeProcesses.set(id, proc);
 
     proc.onData((data) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('process-output', {
-          id, data: data.toString(), stream: 'stdout'
-        });
-      }
+      sendToRenderer('process-output', {
+        id, data: data.toString(), stream: 'stdout'
+      });
     });
 
     proc.onExit(({ exitCode }) => {
       activeProcesses.delete(id);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('process-exit', { id, code: exitCode });
-      }
+      sendToRenderer('process-exit', { id, code: exitCode });
     });
 
     return { id, pid: proc.pid };
@@ -335,12 +423,12 @@ ipcMain.handle('resize-process', async (_event, { id, cols, rows }) => {
 ipcMain.handle('kill-process', async (_event, { id }) => {
   const proc = activeProcesses.get(id);
   if (proc) {
+    activeProcesses.delete(id);
     try {
       proc.kill('SIGTERM');
     } catch (e) {
       try { process.kill(proc.pid, 'SIGTERM'); } catch (e2) { /* ignore */ }
     }
-    activeProcesses.delete(id);
     return true;
   }
   return false;
@@ -350,7 +438,6 @@ ipcMain.handle('kill-process', async (_event, { id }) => {
 // The renderer requests this ON while any future scheduled run is pending,
 // so the machine won't sleep through a scheduled time. The display is still
 // allowed to turn off ('prevent-app-suspension'), only system sleep is held.
-let keepAwakeId = null;
 ipcMain.handle('set-keep-awake', async (_event, { on }) => {
   if (on) {
     if (keepAwakeId === null || !powerSaveBlocker.isStarted(keepAwakeId)) {
@@ -375,21 +462,13 @@ ipcMain.handle('set-keep-awake', async (_event, { on }) => {
 // Hibernate (`shutdown /h`) is deliberate: it has single, predictable
 // behavior, unlike SetSuspendState which silently hibernates anyway when
 // system hibernation is enabled.
-let sleepTimer = null;
-let sleepTarget = null;     // epoch ms when hibernate fires (null = none armed)
-
 function broadcastSleepState() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('sleep-state', { target: sleepTarget });
-  }
+  sendToRenderer('sleep-state', { target: sleepTarget });
 }
 
 function runHibernate() {
   // Release any sleep-blocker first so hibernate isn't held off.
-  if (keepAwakeId !== null && powerSaveBlocker.isStarted(keepAwakeId)) {
-    powerSaveBlocker.stop(keepAwakeId);
-    keepAwakeId = null;
-  }
+  stopKeepAwake();
   try {
     spawn('shutdown', ['/h'], { windowsHide: true });
     console.log('[Hibernate] Triggered system hibernate');
@@ -399,7 +478,7 @@ function runHibernate() {
 }
 
 ipcMain.handle('arm-sleep', async (_event, { delayMs }) => {
-  if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null; }
+  cancelSleepTimer();
   const ms = Math.max(0, Number(delayMs) || 0);
   sleepTarget = Date.now() + ms;
   console.log(`[Hibernate] Armed: in ${Math.round(ms / 1000)}s`);
@@ -414,9 +493,7 @@ ipcMain.handle('arm-sleep', async (_event, { delayMs }) => {
 });
 
 ipcMain.handle('cancel-sleep', async () => {
-  if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null; }
-  const wasArmed = sleepTarget !== null;
-  sleepTarget = null;
+  const wasArmed = cancelSleepTimer();
   if (wasArmed) console.log('[Hibernate] Cancelled by user');
   broadcastSleepState();
   return wasArmed;
@@ -428,11 +505,7 @@ ipcMain.handle('get-sleep-state', async () => ({ target: sleepTarget }));
 // Used at the start of a run to clear the default shell and any
 // leftover processes from previous runs, preventing PTY leaks.
 ipcMain.handle('kill-all-processes', async () => {
-  let count = 0;
-  activeProcesses.forEach((proc, id) => {
-    try { proc.kill('SIGTERM'); count++; } catch (e) { /* ignore */ }
-  });
-  activeProcesses.clear();
+  const count = killAllActiveProcesses('renderer request');
   if (count) console.log(`[IPC] kill-all-processes: terminated ${count} process(es)`);
   return count;
 });

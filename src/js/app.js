@@ -120,12 +120,13 @@ class App {
       this._defaultDirectory = dir;
       const oldDevDir = 'D:\\AI_Projects\\agents-orchestrator';
       const replaceDefaults = new Set(['', '.', oldDevDir]);
+      let changed = false;
 
       if (replaceDefaults.has(this.workflow.defaultDirectory)) {
         this.workflow.defaultDirectory = dir;
+        changed = true;
       }
 
-      let changed = false;
       for (const block of this.workflow.blocks) {
         if (block.type === 'directory' && replaceDefaults.has(block.params?.path || '')) {
           block.params.path = dir;
@@ -695,7 +696,7 @@ class App {
     this.term.onResize(({ cols, rows }) => {
       const pid = this.activeProcessId;
       if (pid) {
-        window.api.resizeProcess({ id: pid, cols, rows });
+        window.api.resizeProcess({ id: pid, cols, rows }).catch(() => {});
       }
     });
 
@@ -716,7 +717,7 @@ class App {
     this.term.onData((data) => {
       const pid = this.activeProcessId;
       if (pid) {
-        window.api.sendInput({ id: pid, text: data });
+        window.api.sendInput({ id: pid, text: data }).catch(() => {});
       }
     });
 
@@ -756,6 +757,9 @@ class App {
         cols: this.term.cols,
         rows: this.term.rows
       });
+      if (result.error) {
+        throw new Error(result.error);
+      }
       this.activeProcessId = result.id;
     } catch (e) {
       console.error('Failed to start default shell', e);
@@ -827,7 +831,7 @@ class App {
               id: this.engine.currentProcessId,
               cols: this.term.cols,
               rows: this.term.rows
-            });
+            }).catch(() => {});
           }
         }
       }
@@ -864,6 +868,7 @@ class App {
     this._firedTargets = {};    // jobId → the target timestamp we already fired
     this._keepAwake = false;    // whether we've asked main to hold off sleep
     this._lastDiskRefresh = 0;
+    this._refreshingSchedules = null;
     // Fire even if a tick lands up to 5 min late (tolerates throttling / brief
     // sleep). Also bounds staleness so ancient schedules don't fire on load.
     this._graceMs = 5 * 60 * 1000;
@@ -895,16 +900,24 @@ class App {
 
   /** Reload scheduled workflows from disk, merge with the current one, re-render. */
   async _refreshScheduledJobs() {
-    try {
-      const all = await window.api.loadWorkflow({});
-      this._diskJobs = (Array.isArray(all) ? all : [])
-        .map(wf => this._normalizeWorkflow(wf))
-        .filter(wf => this._scheduleOf(wf));
-    } catch (e) {
-      this._diskJobs = [];
-    }
-    this._lastDiskRefresh = Date.now();
-    this._rebuildJobs();
+    if (this._refreshingSchedules) return this._refreshingSchedules;
+
+    this._refreshingSchedules = (async () => {
+      try {
+        const all = await window.api.loadWorkflow({});
+        this._diskJobs = (Array.isArray(all) ? all : [])
+          .map(wf => this._normalizeWorkflow(wf))
+          .filter(wf => this._scheduleOf(wf));
+      } catch (e) {
+        this._diskJobs = [];
+      } finally {
+        this._lastDiskRefresh = Date.now();
+        this._rebuildJobs();
+        this._refreshingSchedules = null;
+      }
+    })();
+
+    return this._refreshingSchedules;
   }
 
   /** Build the merged job list (disk ∪ current workflow) and render it. */
