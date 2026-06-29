@@ -105,6 +105,18 @@ class App {
       TEMPLATES.forEach(t => {
         eq(`template-balanced:${t.id}`, analyzeLoops(t.blocks).errors.length, 0);
       });
+
+      // 9. onLoopIteration fires once per iteration plus a final done event.
+      const loopEvents = async (blocks) => {
+        const engine = new ExecutionEngine();
+        const evs = [];
+        engine.onLoopIteration = (idx, iter, total, done) => evs.push([idx, iter, total, !!done]);
+        await engine.execute(blocks, '.', { dryRun: true });
+        return evs;
+      };
+      eq('loop-events',
+        await loopEvents([L(), { type: 'loop', params: { count: 2 } }, L(), { type: 'loopEnd', params: {} }, L()]),
+        [[1, 1, 2, false], [1, 2, 2, false], [1, 2, 2, true]]);
     } catch (err) {
       failures.push(`exception: ${err && err.message ? err.message : err}`);
     }
@@ -348,6 +360,7 @@ class App {
 
   _initEditorDrop() {
     const canvas = document.getElementById('editor-canvas');
+    const list = document.getElementById('block-list');
 
     canvas.addEventListener('dragover', (e) => {
       // Only accept palette drags (not SortableJS internal drags)
@@ -355,12 +368,14 @@ class App {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         canvas.classList.add('drag-over');
+        this._placeDropMarker(list, e.clientY);
       }
     });
 
     canvas.addEventListener('dragleave', (e) => {
       if (!canvas.contains(e.relatedTarget)) {
         canvas.classList.remove('drag-over');
+        this._removeDropMarker();
       }
     });
 
@@ -368,8 +383,11 @@ class App {
       e.preventDefault();
       canvas.classList.remove('drag-over');
       const type = e.dataTransfer.getData('application/x-block-type');
+      const index = this._dropIndexFromY(list, e.clientY);
+      this._removeDropMarker();
       if (type && BLOCK_TYPES[type]) {
-        this.addBlock(type);
+        // Drop position determines where the block lands (not always the end).
+        this.addBlock(type, index);
       }
     });
 
@@ -389,6 +407,34 @@ class App {
         this._onWorkflowChanged();
       }
     });
+  }
+
+  /** Index at which a palette drop at the given Y should insert (0..length). */
+  _dropIndexFromY(list, clientY) {
+    const els = [...list.querySelectorAll('.workflow-block')];
+    for (let k = 0; k < els.length; k++) {
+      const rect = els[k].getBoundingClientRect();
+      if (clientY < rect.top + rect.height / 2) return k;
+    }
+    return els.length; // past the last block → append
+  }
+
+  /** Show a horizontal insertion line at the prospective drop position. */
+  _placeDropMarker(list, clientY) {
+    if (!this._dropMarker) {
+      this._dropMarker = document.createElement('div');
+      this._dropMarker.className = 'drop-marker';
+    }
+    const els = [...list.querySelectorAll('.workflow-block')];
+    const idx = this._dropIndexFromY(list, clientY);
+    if (idx >= els.length) list.appendChild(this._dropMarker);
+    else list.insertBefore(this._dropMarker, els[idx]);
+  }
+
+  _removeDropMarker() {
+    if (this._dropMarker && this._dropMarker.parentNode) {
+      this._dropMarker.parentNode.removeChild(this._dropMarker);
+    }
   }
 
   // ── Bottom Toolbar ─────────────────────────────────────────
@@ -483,6 +529,7 @@ class App {
         this._forEachBlock((el) => {
           el.classList.remove('done', 'error', 'executing');
         });
+        this._clearLoopBadges();
         badge.textContent = 'Idle';
         badge.className = 'workflow-status';
         dot.className = 'status-indicator';
@@ -493,6 +540,29 @@ class App {
     engine.onStatusChange = (status) => {
       document.getElementById('status-text').textContent = status;
     };
+
+    engine.onLoopIteration = (loopIndex, iter, total, done) => {
+      const el = this._blockElAt(loopIndex);
+      if (!el) return;
+      const header = el.querySelector('.block-header');
+      if (!header) return;
+      let badge = header.querySelector('.loop-iter');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'loop-iter';
+        header.appendChild(badge);
+      }
+      badge.textContent = `${iter}/${total}`;
+      badge.classList.toggle('done', !!done);
+      if (!done) {
+        document.getElementById('status-text').textContent = `🔄 Loop ${iter}/${total}`;
+      }
+    };
+  }
+
+  /** Remove any loop-iteration badges left on Loop blocks after a run. */
+  _clearLoopBadges() {
+    document.querySelectorAll('.workflow-block .loop-iter').forEach(b => b.remove());
   }
 
   // ── Block CRUD ─────────────────────────────────────────────
@@ -551,10 +621,13 @@ class App {
     const unmatchedSet = new Set(unmatched);
 
     this.workflow.blocks.forEach((block, i) => {
-      // Add connector line between blocks
+      // Add connector line between blocks, indented to follow the loop body
+      // so the nesting rail reads as continuous.
       if (i > 0) {
         const conn = document.createElement('div');
         conn.className = 'block-connector';
+        const connDepth = Math.min(depths[i - 1] || 0, depths[i] || 0);
+        if (connDepth > 0) conn.style.marginLeft = `${Math.min(connDepth, 6) * 22}px`;
         list.appendChild(conn);
       }
 
@@ -714,6 +787,7 @@ class App {
     // Clear log and terminal
     document.getElementById('output-log').innerHTML = '';
     this.term.clear();
+    this._clearLoopBadges();
     if (note) this._appendLog(note, 'system');
 
     // Sync params from DOM → data

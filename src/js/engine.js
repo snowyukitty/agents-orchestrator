@@ -21,6 +21,7 @@ export class ExecutionEngine {
     this.onBlockEnd = null;       // (index, success) => void
     this.onComplete = null;       // (success) => void
     this.onStatusChange = null;   // (status) => void
+    this.onLoopIteration = null;  // (loopIndex, iter, total, done) => void
   }
 
   // ── Public API ─────────────────────────────────────────────
@@ -99,9 +100,11 @@ export class ExecutionEngine {
           i = end + 1;
           continue;
         }
-        loopStack.push({ start: i, end, total: count, iter: 1 });
+        const frame = { start: i, end, total: count, iter: 1 };
+        loopStack.push(frame);
         this._log(`🔄 Loop ▸ iteration 1/${count}`, 'system');
         if (this._dryRun) this._trace.push({ index: i, type: 'loop', iter: 1 });
+        this._notifyLoop(frame, false);
         if (this.onBlockEnd) this.onBlockEnd(i, true);
         i++;
         continue;
@@ -118,11 +121,13 @@ export class ExecutionEngine {
         if (frame.iter < frame.total) {
           frame.iter++;
           this._log(`🔁 Loop ▸ iteration ${frame.iter}/${frame.total}`, 'system');
+          this._notifyLoop(frame, false);
           if (this.onBlockEnd) this.onBlockEnd(i, true);
           i = frame.start + 1;   // jump back to the first block of the body
           continue;
         }
         this._log(`🔁 Loop complete (${frame.total}×)`, 'system');
+        this._notifyLoop(frame, true);
         loopStack.pop();
         if (this.onBlockEnd) this.onBlockEnd(i, true);
         i++;
@@ -409,6 +414,10 @@ export class ExecutionEngine {
 
   _setStatus(status) {
     if (this.onStatusChange) this.onStatusChange(status);
+  }
+
+  _notifyLoop(frame, done) {
+    if (this.onLoopIteration) this.onLoopIteration(frame.start, frame.iter, frame.total, done);
   }
 }
 

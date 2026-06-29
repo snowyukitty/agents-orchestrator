@@ -4,9 +4,14 @@ A desktop orchestrator application built with Electron, allowing users to automa
 
 ## Project Status
 
-**Version**: 0.1.5 MVP
+**Version**: 0.1.6 MVP
 
 ### Release Notes
+
+#### v0.1.6
+- **Live loop progress**: While a workflow runs, the active Loop block shows a live iteration badge (e.g. `2/3`) that turns green when the loop finishes, and the status line reads `🔄 Loop 2/3`. Driven by a new `onLoopIteration` engine hook, covered by the self-test.
+- **Loop grouping visuals**: Loop / End Loop markers share a tinted background so the pair reads as brackets, and the connector lines between nested blocks are indented to form a continuous nesting rail down the loop body.
+- **Drop-to-position**: Dragging a block from the palette now inserts it where you drop it (a glowing insertion line previews the spot) instead of always appending to the end. Dropping a Loop still seeds its matching End Loop at that position.
 
 #### v0.1.5
 - **Loop structure validation in the editor**: Unbalanced loop markers (a Loop with no End Loop, or a stray End Loop) are now flagged inline with a dashed warning outline and an explanatory tooltip, plus a summary banner above the block list. The run still proceeds safely (the engine skips broken markers) — the warnings just make the structure obvious while editing.
@@ -38,7 +43,8 @@ A desktop orchestrator application built with Electron, allowing users to automa
 
 ### Completed Features
 - **Visual Workflow Builder**: Users can construct automation workflows by combining blocks (Schedule, Directory, Command, Wait, Send Input, Keypress, Loop / End Loop, Log, Hibernate PC).
-- **Loops**: A **Loop** block repeats every block up to its matching **End Loop** a configurable number of times. Nested loops are supported and the loop body is indented by nesting depth so the structure is readable at a glance. Unbalanced loop markers are flagged inline (dashed outline + tooltip) and summarized in a banner, while the engine still runs safely by skipping broken markers.
+- **Loops**: A **Loop** block repeats every block up to its matching **End Loop** a configurable number of times. Nested loops are supported and the loop body is indented (with a continuous nesting rail) so the structure is readable at a glance. A live iteration badge (`2/3`) tracks progress during a run, unbalanced loop markers are flagged inline (dashed outline + tooltip) and summarized in a banner, and the engine still runs safely by skipping broken markers.
+- **Drag-to-Position Editing**: Blocks dragged from the palette land exactly where they are dropped (with a live insertion-line preview); they can still be reordered afterward by their drag handles.
 - **Templates**: A **🧩 Templates** picker provides pre-built workflows (including a Loop example) as one-click starting points.
 - **Persistent Storage**: Workflows are saved to and loaded from `%APPDATA%/agents-orchestrator/workflows/`, with atomic writes and resilient loading so one malformed workflow file does not break the whole schedule list.
 - **Automated PTY Execution**: The engine executes terminal applications in the background using `node-pty` with modern Windows `ConPTY` enabled, providing full ANSI color support and proper terminal layout.
