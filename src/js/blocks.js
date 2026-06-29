@@ -99,12 +99,21 @@ export const BLOCK_TYPES = {
     type: 'loop',
     icon: '🔄',
     label: 'Loop',
-    description: 'Repeat N times',
+    description: 'Repeat blocks until End Loop',
     color: 'loop',
     defaultParams: { count: 3 },
     params: [
       { key: 'count', label: 'Times', type: 'number', min: 1, max: 999 }
     ]
+  },
+  loopEnd: {
+    type: 'loopEnd',
+    icon: '🔁',
+    label: 'End Loop',
+    description: 'Close the nearest open Loop',
+    color: 'loop',
+    defaultParams: {},
+    params: []
   },
   log: {
     type: 'log',

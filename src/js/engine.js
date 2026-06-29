@@ -25,7 +25,7 @@ export class ExecutionEngine {
 
   // ── Public API ─────────────────────────────────────────────
 
-  async execute(blocks, defaultCwd) {
+  async execute(blocks, defaultCwd, opts = {}) {
     if (this.running) throw new Error('Engine is already running');
 
     this.running = true;
@@ -36,6 +36,8 @@ export class ExecutionEngine {
     this._procSeq = 0;
     this._spawnedIds = new Set();
     this._abortLogged = false;
+    this._dryRun = !!opts.dryRun;   // record-only mode for tests (no PTY, no waits)
+    this._trace = [];               // [{ index, type, iter? }] executed-block log
 
     this._setStatus('running');
     this._log('▶ Workflow execution started', 'system');
@@ -44,35 +46,7 @@ export class ExecutionEngine {
     let success = true;
 
     try {
-      for (let i = 0; i < blocks.length; i++) {
-        if (this.aborted) {
-          this._logAbortOnce();
-          success = false;
-          break;
-        }
-
-        this.currentBlockIndex = i;
-        const block = blocks[i];
-
-        if (this.onBlockStart) this.onBlockStart(i);
-        this._log(`\n─── Step ${i + 1}: ${block.type.toUpperCase()} ───`, 'system');
-
-        try {
-          await this._executeBlock(block);
-          if (this.aborted) {
-            if (this.onBlockEnd) this.onBlockEnd(i, false);
-            this._logAbortOnce();
-            success = false;
-            break;
-          }
-          if (this.onBlockEnd) this.onBlockEnd(i, true);
-        } catch (err) {
-          this._log(`❌ Error: ${err.message}`, 'stderr');
-          if (this.onBlockEnd) this.onBlockEnd(i, false);
-          success = false;
-          break;
-        }
-      }
+      success = await this._drive(blocks);
     } finally {
       this.running = false;
       this.currentBlockIndex = -1;
@@ -83,6 +57,100 @@ export class ExecutionEngine {
       );
       if (this.onComplete) this.onComplete(success);
     }
+
+    return this._trace;
+  }
+
+  // Walks the flat block list, honouring loop / loopEnd as a nesting structure.
+  // A `loop` block repeats every block up to its matching `loopEnd` N times.
+  // Nesting is supported via a frame stack; unmatched markers are skipped with
+  // a warning. Returns true if the whole list ran without error/abort.
+  async _drive(blocks) {
+    const loopStack = [];
+    // Safety net so a pathological workflow can't spin forever (counts are
+    // bounded per-block, but deeply nested loops multiply).
+    const MAX_STEPS = 1_000_000;
+    let steps = 0;
+    let i = 0;
+
+    while (i < blocks.length) {
+      if (this.aborted) { this._logAbortOnce(); return false; }
+      if (++steps > MAX_STEPS) {
+        this._log('⚠️ Loop step limit reached — stopping to avoid an infinite loop', 'stderr');
+        return false;
+      }
+
+      const block = blocks[i];
+      this.currentBlockIndex = i;
+      if (this.onBlockStart) this.onBlockStart(i);
+
+      if (block.type === 'loop') {
+        const end = matchingLoopEnd(blocks, i);
+        const count = Math.max(0, Math.floor(Number(block.params?.count) || 0));
+        if (end === -1) {
+          this._log('🔄 Loop has no matching “End Loop” — skipping this block', 'system');
+          if (this.onBlockEnd) this.onBlockEnd(i, true);
+          i++;
+          continue;
+        }
+        if (count <= 0) {
+          this._log('🔄 Loop count is 0 — skipping its body', 'system');
+          if (this.onBlockEnd) this.onBlockEnd(i, true);
+          i = end + 1;
+          continue;
+        }
+        loopStack.push({ start: i, end, total: count, iter: 1 });
+        this._log(`🔄 Loop ▸ iteration 1/${count}`, 'system');
+        if (this._dryRun) this._trace.push({ index: i, type: 'loop', iter: 1 });
+        if (this.onBlockEnd) this.onBlockEnd(i, true);
+        i++;
+        continue;
+      }
+
+      if (block.type === 'loopEnd') {
+        const frame = loopStack[loopStack.length - 1];
+        if (!frame) {
+          this._log('🔁 “End Loop” without a matching Loop — ignoring', 'system');
+          if (this.onBlockEnd) this.onBlockEnd(i, true);
+          i++;
+          continue;
+        }
+        if (frame.iter < frame.total) {
+          frame.iter++;
+          this._log(`🔁 Loop ▸ iteration ${frame.iter}/${frame.total}`, 'system');
+          if (this.onBlockEnd) this.onBlockEnd(i, true);
+          i = frame.start + 1;   // jump back to the first block of the body
+          continue;
+        }
+        this._log(`🔁 Loop complete (${frame.total}×)`, 'system');
+        loopStack.pop();
+        if (this.onBlockEnd) this.onBlockEnd(i, true);
+        i++;
+        continue;
+      }
+
+      this._log(`\n─── Step ${i + 1}: ${block.type.toUpperCase()} ───`, 'system');
+      try {
+        if (this._dryRun) {
+          this._trace.push({ index: i, type: block.type });
+        } else {
+          await this._executeBlock(block);
+        }
+        if (this.aborted) {
+          if (this.onBlockEnd) this.onBlockEnd(i, false);
+          this._logAbortOnce();
+          return false;
+        }
+        if (this.onBlockEnd) this.onBlockEnd(i, true);
+      } catch (err) {
+        this._log(`❌ Error: ${err.message}`, 'stderr');
+        if (this.onBlockEnd) this.onBlockEnd(i, false);
+        return false;
+      }
+      i++;
+    }
+
+    return true;
   }
 
   abort() {
@@ -273,11 +341,6 @@ export class ExecutionEngine {
       }
     },
 
-    loop(block) {
-      const count = block.params.count || 1;
-      this._log(`🔄 Loop ${count}x (not yet implemented in MVP)`, 'system');
-    },
-
     log(block) {
       const msg = block.params.message || '';
       this._log(`📋 ${msg}`, 'system');
@@ -347,4 +410,51 @@ export class ExecutionEngine {
   _setStatus(status) {
     if (this.onStatusChange) this.onStatusChange(status);
   }
+}
+
+// ── Loop Structure Helpers ───────────────────────────────────
+// Pure functions so the loop nesting model can be reasoned about (and tested)
+// independently of the engine's side effects.
+
+/** Index of the `loopEnd` that closes the `loop` at startIdx, or -1 if none. */
+export function matchingLoopEnd(blocks, startIdx) {
+  let depth = 0;
+  for (let j = startIdx + 1; j < blocks.length; j++) {
+    const t = blocks[j]?.type;
+    if (t === 'loop') depth++;
+    else if (t === 'loopEnd') {
+      if (depth === 0) return j;
+      depth--;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Compute the nesting depth of each block for indentation, and flag structural
+ * problems (a loop with no end, or an end with no loop). Returns
+ * { depths: number[], errors: string[] }.
+ */
+export function analyzeLoops(blocks) {
+  const depths = new Array(blocks.length).fill(0);
+  const errors = [];
+  const stack = []; // indices of open `loop` blocks
+  blocks.forEach((block, i) => {
+    if (block.type === 'loopEnd') {
+      if (stack.length === 0) {
+        errors.push(`Block ${i + 1}: “End Loop” without a matching Loop`);
+        depths[i] = 0;
+      } else {
+        stack.pop();
+        depths[i] = stack.length; // align the end marker with its loop body's parent
+      }
+      return;
+    }
+    depths[i] = stack.length;
+    if (block.type === 'loop') stack.push(i);
+  });
+  for (const openIdx of stack) {
+    errors.push(`Block ${openIdx + 1}: Loop has no matching “End Loop”`);
+  }
+  return { depths, errors };
 }

@@ -16,7 +16,7 @@
       <span class="titlebar-icon">🎛️</span>
       <span class="titlebar-text">Agents Orchestrator</span>
     </div>
-    <div class="titlebar-version">v0.1.3 MVP</div>
+    <div class="titlebar-version">v0.1.4 MVP</div>
   </header>
 
   <!-- ═══ Sleep Countdown Banner ═══ -->
@@ -118,6 +118,9 @@
       <button class="btn btn-secondary" id="btn-load">
         <span>📂</span> Load
       </button>
+      <button class="btn btn-secondary" id="btn-templates" title="Start from a pre-built template">
+        <span>🧩</span> Templates
+      </button>
       <button class="btn btn-secondary" id="btn-export">
         <span>📤</span> Export
       </button>
@@ -150,6 +153,22 @@
       <div class="modal-footer">
         <span class="modal-hint">Workflows with a <strong>Schedule</strong> block appear here. Save a workflow to keep it scheduled across restarts.</span>
         <button class="btn btn-secondary btn-sm" id="btn-refresh-schedules" title="Reload from disk">🔄 Refresh</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Templates Modal ═══ -->
+  <div class="modal-overlay hidden" id="template-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>🧩 Templates</h2>
+        <button class="btn btn-icon btn-sm" id="btn-close-templates" title="Close">✕</button>
+      </div>
+      <div class="modal-body" id="template-list">
+        <!-- Template rows rendered by JS -->
+      </div>
+      <div class="modal-footer">
+        <span class="modal-hint">Pick a template to replace the current workflow with a pre-built starting point.</span>
       </div>
     </div>
   </div>

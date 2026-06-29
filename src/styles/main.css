@@ -265,6 +265,7 @@ html, body {
 .palette-block[data-type="input"]::before    { background: var(--block-input); }
 .palette-block[data-type="keypress"]::before { background: var(--block-keypress); }
 .palette-block[data-type="loop"]::before     { background: var(--block-loop); }
+.palette-block[data-type="loopEnd"]::before  { background: var(--block-loop); }
 .palette-block[data-type="log"]::before      { background: var(--block-log); }
 .palette-block[data-type="sleep"]::before    { background: var(--block-sleep); }
 
@@ -459,6 +460,7 @@ html, body {
 .block-stripe.input     { background: var(--block-input); }
 .block-stripe.keypress  { background: var(--block-keypress); }
 .block-stripe.loop      { background: var(--block-loop); }
+.block-stripe.loopEnd   { background: var(--block-loop); }
 .block-stripe.log       { background: var(--block-log); }
 .block-stripe.sleep     { background: var(--block-sleep); }
 
@@ -1159,3 +1161,49 @@ html, body {
 .sched-countdown.passed { color: var(--text-muted); font-weight: 400; }
 .sched-countdown.handled { color: var(--text-muted); font-weight: 600; }
 .sched-state { width: 14px; text-align: center; font-size: var(--font-size-sm); }
+
+/* ── Loop nesting indent ───────────────────────────────────── */
+/* Blocks between a Loop and its End Loop are indented and marked with an
+   accent rail so the repeated body reads as a nested group. */
+.workflow-block.nested {
+  border-left: 2px solid color-mix(in srgb, var(--block-loop) 55%, transparent);
+}
+
+/* ── Templates picker rows ─────────────────────────────────── */
+.tpl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  margin: var(--sp-2) 0;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--block-command);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+.tpl-row:hover {
+  border-color: var(--accent-cyan);
+  transform: translateX(2px);
+}
+.tpl-main { min-width: 0; }
+.tpl-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tpl-desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+.tpl-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}

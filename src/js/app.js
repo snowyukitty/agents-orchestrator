@@ -8,7 +8,8 @@ import {
   currentDateTimeLocalValue, renderPaletteBlock, renderWorkflowBlock
 } from './blocks.js';
 
-import { ExecutionEngine } from './engine.js';
+import { ExecutionEngine, analyzeLoops, matchingLoopEnd } from './engine.js';
+import { TEMPLATES } from './templates.js';
 
 class App {
   constructor() {
@@ -27,77 +28,165 @@ class App {
     this._init();
     this._loadDemoWorkflow();
     this._loadDefaultDirectory();
-  }
 
-  // ── Demo Cases ─────────────────────────────────────────────
-  // Pre-built demo workflows for first-time users.
-  // TODO: Remove or move to a separate "templates" system later.
-
-  _loadDemoWorkflow() {
-    const demos = this._getDemoCases();
-    if (demos.length > 0) {
-      // Load the first demo by default
-      const demo = demos[0];
-      this.workflow = this._normalizeWorkflow({
-        ...this.workflow,
-        name: demo.name,
-        defaultDirectory: demo.defaultDirectory,
-        blocks: demo.blocks,
-      });
-      document.getElementById('workflow-name').value = demo.name;
-      this.renderBlocks();
-      this._onWorkflowChanged();
-      this._markScheduleBlockTargetHandled(this._scheduleOf(this.workflow));
+    // Headless regression run: `electron . --self-test` loads the page with
+    // ?selftest=1, exercises the engine's loop control flow with no real PTYs,
+    // and reports pass/fail to the main process which sets the exit code.
+    if (new URLSearchParams(location.search).get('selftest') === '1') {
+      this._runSelfTest();
     }
   }
 
-  _getDemoCases() {
-    const defaultDirectory = this._defaultDirectory || '.';
-    const defaultScheduleTime = currentDateTimeLocalValue();
-    return [
-      {
-        name: 'Demo: Claude Auto Session',
-        defaultDirectory,
-        blocks: [
-          {
-            id: 'demo-1-schedule',
-            type: 'schedule',
-            // Show a useful default without auto-running the demo on app start.
-            params: { datetime: defaultScheduleTime, mode: 'once' }
-          },
-          {
-            id: 'demo-1-dir',
-            type: 'directory',
-            params: { path: defaultDirectory }
-          },
-          {
-            id: 'demo-1-cmd',
-            type: 'command',
-            params: { command: 'claude --permission-mode bypassPermissions' }
-          },
-          {
-            id: 'demo-1-wait1',
-            type: 'wait',
-            params: { duration: 20, unit: 'seconds' }
-          },
-          {
-            id: 'demo-1-input1',
-            type: 'input',
-            params: { text: 'ping. reply ok only.', pressEnter: true }
-          },
-          {
-            id: 'demo-1-wait2',
-            type: 'wait',
-            params: { duration: 60, unit: 'seconds' }
-          },
-          {
-            id: 'demo-1-input2',
-            type: 'input',
-            params: { text: '/exit', pressEnter: true }
-          },
-        ]
-      },
-    ];
+  // ── Self-Test (headless engine regression) ─────────────────
+
+  async _runSelfTest() {
+    const failures = [];
+    // Run a block list through the engine in dry-run mode and return the
+    // ordered list of executed leaf-block indices (loop markers excluded).
+    const trace = async (blocks) => {
+      const engine = new ExecutionEngine();
+      const t = await engine.execute(blocks, '.', { dryRun: true });
+      return t.filter(e => e.type !== 'loop' && e.type !== 'loopEnd').map(e => e.index);
+    };
+    const L = () => ({ type: 'log', params: { message: 'x' } });
+    const eq = (name, got, want) => {
+      const g = JSON.stringify(got), w = JSON.stringify(want);
+      if (g !== w) failures.push(`${name}: got ${g}, expected ${w}`);
+    };
+
+    try {
+      // 1. A simple loop repeats its single-block body N times.
+      eq('simple-loop',
+        await trace([L(), { type: 'loop', params: { count: 2 } }, L(), { type: 'loopEnd', params: {} }, L()]),
+        [0, 2, 2, 4]);
+
+      // 2. Nested loops multiply (outer 2 × inner 3).
+      eq('nested-loop',
+        await trace([
+          { type: 'loop', params: { count: 2 } }, L(),
+          { type: 'loop', params: { count: 3 } }, L(),
+          { type: 'loopEnd', params: {} }, { type: 'loopEnd', params: {} }, L(),
+        ]),
+        [1, 3, 3, 3, 1, 3, 3, 3, 6]);
+
+      // 3. A zero-count loop skips its whole body.
+      eq('zero-count-loop',
+        await trace([L(), { type: 'loop', params: { count: 0 } }, L(), { type: 'loopEnd', params: {} }, L()]),
+        [0, 4]);
+
+      // 4. An unmatched Loop (no End Loop) is skipped, not fatal.
+      eq('unmatched-loop',
+        await trace([{ type: 'loop', params: { count: 2 } }, L()]),
+        [1]);
+
+      // 5. An unmatched End Loop is ignored.
+      eq('unmatched-end',
+        await trace([{ type: 'loopEnd', params: {} }, L()]),
+        [1]);
+
+      // 6. matchingLoopEnd pairs the correct (nested) markers.
+      const nested = [
+        { type: 'loop' }, { type: 'loop' }, { type: 'loopEnd' }, { type: 'loopEnd' },
+      ];
+      eq('matching-outer', matchingLoopEnd(nested, 0), 3);
+      eq('matching-inner', matchingLoopEnd(nested, 1), 2);
+
+      // 7. analyzeLoops reports structural errors and depths.
+      const a = analyzeLoops([{ type: 'loop' }, { type: 'log' }, { type: 'loopEnd' }]);
+      eq('analyze-clean-errors', a.errors.length, 0);
+      eq('analyze-clean-depths', a.depths, [0, 1, 0]);
+      const b = analyzeLoops([{ type: 'loop' }, { type: 'log' }]);
+      eq('analyze-open-loop', b.errors.length, 1);
+      const c = analyzeLoops([{ type: 'loopEnd' }]);
+      eq('analyze-stray-end', c.errors.length, 1);
+    } catch (err) {
+      failures.push(`exception: ${err && err.message ? err.message : err}`);
+    }
+
+    const passed = failures.length === 0;
+    const details = passed ? 'all engine self-tests passed' : failures.join('; ');
+    try {
+      await window.api.selfTestResult?.({ passed, details });
+    } catch (_e) { /* main will time out and exit non-zero */ }
+  }
+
+  // ── Templates ──────────────────────────────────────────────
+  // Pre-built starting points. The first one is loaded on launch; the rest are
+  // available from the Templates picker. Definitions live in templates.js.
+
+  _loadDemoWorkflow() {
+    if (TEMPLATES.length > 0) this._applyTemplate(TEMPLATES[0], { silent: true });
+  }
+
+  /** Instantiate a template into the editor, filling in dir/time placeholders. */
+  _applyTemplate(tpl, { silent = false } = {}) {
+    if (!tpl) return;
+    const dir = this._defaultDirectory || '.';
+    const now = currentDateTimeLocalValue();
+
+    const blocks = tpl.blocks.map(b => {
+      const params = { ...b.params };
+      if (b.type === 'directory' && !params.path) params.path = dir;
+      if (b.type === 'schedule' && !params.datetime) params.datetime = now;
+      return { type: b.type, params };
+    });
+
+    this.workflow = this._normalizeWorkflow({
+      id: `wf-${Date.now()}`,
+      name: tpl.name,
+      defaultDirectory: dir,
+      blocks,
+    });
+
+    const nameInput = document.getElementById('workflow-name');
+    if (nameInput) nameInput.value = this.workflow.name;
+    this.renderBlocks();
+    this._onWorkflowChanged();
+
+    // Loading a template should never auto-fire: treat its default schedule
+    // time as already handled for the current occurrence.
+    this._markScheduleBlockTargetHandled(this._scheduleOf(this.workflow));
+
+    if (!silent) {
+      this._termLog(`🧩 Loaded template: ${tpl.name}`, 'system');
+      this._flashStatus('Template loaded');
+    }
+  }
+
+  _initTemplates() {
+    const modal = document.getElementById('template-modal');
+    const list = document.getElementById('template-list');
+    const open = () => { this._renderTemplateList(); modal?.classList.remove('hidden'); };
+    const close = () => modal?.classList.add('hidden');
+
+    document.getElementById('btn-templates')?.addEventListener('click', open);
+    document.getElementById('btn-close-templates')?.addEventListener('click', close);
+    modal?.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    if (list) {
+      list.addEventListener('click', (e) => {
+        const row = e.target.closest('[data-template-id]');
+        if (!row) return;
+        const tpl = TEMPLATES.find(t => t.id === row.dataset.templateId);
+        if (tpl) { this._applyTemplate(tpl); close(); }
+      });
+    }
+  }
+
+  _renderTemplateList() {
+    const list = document.getElementById('template-list');
+    if (!list) return;
+    list.innerHTML = TEMPLATES.map(t => {
+      const count = t.blocks.length;
+      return `
+        <div class="tpl-row" data-template-id="${this._esc(t.id)}">
+          <div class="tpl-main">
+            <div class="tpl-name">${this._esc(t.name)}</div>
+            <div class="tpl-desc">${this._esc(t.description)}</div>
+          </div>
+          <div class="tpl-meta">${count} block${count === 1 ? '' : 's'} ›</div>
+        </div>`;
+    }).join('');
   }
 
   // ── Initialization ─────────────────────────────────────────
@@ -111,6 +200,7 @@ class App {
     this._initEngine();
     this._initScheduler();
     this._initSleep();
+    this._initTemplates();
     this._updateEmptyState();
   }
 
@@ -404,10 +494,14 @@ class App {
   addBlock(type, insertIndex = -1) {
     const block = createBlock(type);
 
+    // Adding a Loop also seeds its matching End Loop so the pair stays balanced;
+    // the user drags the blocks to repeat in between them.
+    const extra = type === 'loop' ? [block, createBlock('loopEnd')] : [block];
+
     if (insertIndex >= 0 && insertIndex < this.workflow.blocks.length) {
-      this.workflow.blocks.splice(insertIndex, 0, block);
+      this.workflow.blocks.splice(insertIndex, 0, ...extra);
     } else {
-      this.workflow.blocks.push(block);
+      this.workflow.blocks.push(...extra);
     }
 
     this.renderBlocks();
@@ -444,6 +538,10 @@ class App {
     const list = document.getElementById('block-list');
     list.innerHTML = '';
 
+    // Indent blocks by their loop-nesting depth so the body of a Loop reads as
+    // a visually nested group between its Loop and End Loop markers.
+    const { depths } = analyzeLoops(this.workflow.blocks);
+
     this.workflow.blocks.forEach((block, i) => {
       // Add connector line between blocks
       if (i > 0) {
@@ -454,6 +552,11 @@ class App {
 
       const el = renderWorkflowBlock(block, i);
       if (!el) return;
+      const depth = depths[i] || 0;
+      if (depth > 0) {
+        el.classList.add('nested');
+        el.style.marginLeft = `${Math.min(depth, 6) * 22}px`;
+      }
       this._attachBlockEvents(el, block);
       list.appendChild(el);
     });

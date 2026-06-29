@@ -49,6 +49,8 @@ let sleepTarget = null; // epoch ms when hibernate fires (null = none armed)
 const activeProcesses = new Map();
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 const isSmokeTest = process.argv.includes('--smoke-test');
+const isSelfTest = process.argv.includes('--self-test');
+let selfTestTimer = null;
 
 function isDirectory(dir) {
   try {
@@ -136,7 +138,7 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadFile('src/index.html');
+  mainWindow.loadFile('src/index.html', isSelfTest ? { query: { selftest: '1' } } : undefined);
 
   // Show window only after content is fully rendered
   mainWindow.once('ready-to-show', () => {
@@ -167,6 +169,15 @@ function createWindow() {
         app.isQuitting = true;
         app.quit();
       }, 1000);
+    }
+    if (isSelfTest) {
+      console.log('[Main] Self-test loaded; waiting for result...');
+      // Fail-safe: if the renderer never reports back (e.g. it threw before
+      // running), exit non-zero so CI/the smoke chain notices.
+      selfTestTimer = setTimeout(() => {
+        console.error('[Main] Self-test timed out without a result');
+        finishSelfTest(false);
+      }, 15000);
     }
   });
 
@@ -512,6 +523,23 @@ ipcMain.handle('kill-all-processes', async () => {
 
 // ── IPC: App Defaults ────────────────────────────────────────
 ipcMain.handle('get-default-directory', async () => app.getPath('home'));
+
+// ── IPC: Self-Test Result ────────────────────────────────────
+// The renderer reports the headless engine self-test outcome here; we log it
+// and exit with a matching status code so `npm test` reflects pass/fail.
+function finishSelfTest(passed) {
+  if (selfTestTimer) { clearTimeout(selfTestTimer); selfTestTimer = null; }
+  app.isQuitting = true;
+  cleanupForQuit();
+  app.exit(passed ? 0 : 1);
+}
+
+ipcMain.handle('self-test-result', async (_event, { passed, details } = {}) => {
+  if (passed) console.log(`[Main] Self-test PASSED — ${details || ''}`);
+  else console.error(`[Main] Self-test FAILED — ${details || ''}`);
+  finishSelfTest(!!passed);
+  return true;
+});
 
 // ── IPC: Save Workflow ───────────────────────────────────────
 function workflowStoreDir() {

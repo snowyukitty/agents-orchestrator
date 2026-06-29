@@ -4,9 +4,14 @@ A desktop orchestrator application built with Electron, allowing users to automa
 
 ## Project Status
 
-**Version**: 0.1.3 MVP
+**Version**: 0.1.4 MVP
 
 ### Release Notes
+
+#### v0.1.4
+- **Real Loop block**: The `loop` block now actually repeats. It pairs with a new **End Loop** (`loopEnd`) block — every block between a Loop and its matching End Loop runs `count` times. Adding a Loop auto-seeds its End Loop, nested loops are supported, and the loop body is visually indented by nesting depth. Unbalanced markers (a Loop with no End, or a stray End) are skipped with a warning instead of breaking the run.
+- **Workflow Templates**: A new **🧩 Templates** picker offers pre-built starting points (Claude Auto Session, a Loop example, a nightly run + hibernate, and a quick command). Selecting one replaces the current workflow; directory/time placeholders are filled with sensible local defaults and never auto-fire on load.
+- **Headless engine self-test**: `npm test` (`electron . --self-test`) runs the engine's loop control flow in a dry-run mode with no real PTYs, asserts simple/nested/zero-count/unbalanced loop behavior plus the pure loop helpers, and exits non-zero on any regression.
 
 #### v0.1.3
 - Added a one-click current-time control beside Schedule datetime fields.
@@ -28,7 +33,9 @@ A desktop orchestrator application built with Electron, allowing users to automa
 - Ignored local `mcps/` tool descriptor caches in Git and packaged builds.
 
 ### Completed Features
-- **Visual Workflow Builder**: Users can construct automation workflows by combining blocks (Schedule, Directory, Command, Wait, Send Input, Keypress, Loop, Log, Hibernate PC).
+- **Visual Workflow Builder**: Users can construct automation workflows by combining blocks (Schedule, Directory, Command, Wait, Send Input, Keypress, Loop / End Loop, Log, Hibernate PC).
+- **Loops**: A **Loop** block repeats every block up to its matching **End Loop** a configurable number of times. Nested loops are supported and the loop body is indented by nesting depth so the structure is readable at a glance.
+- **Templates**: A **🧩 Templates** picker provides pre-built workflows (including a Loop example) as one-click starting points.
 - **Persistent Storage**: Workflows are saved to and loaded from `%APPDATA%/agents-orchestrator/workflows/`, with atomic writes and resilient loading so one malformed workflow file does not break the whole schedule list.
 - **Automated PTY Execution**: The engine executes terminal applications in the background using `node-pty` with modern Windows `ConPTY` enabled, providing full ANSI color support and proper terminal layout.
 - **Dual-Pane Output**: The UI features a horizontally resizable right panel split into:
@@ -52,7 +59,6 @@ A desktop orchestrator application built with Electron, allowing users to automa
 
 ### Known Issues & Unfinished Work
 - **Complex Autocomplete Stealing Enter Key**: Highly interactive CLIs (like `@inquirer/prompts` used by Claude CLI) pop up autocomplete menus that can intercept `\r` (Enter) inputs from the engine. A "double-tap" Enter is implemented to bypass the menu but may still need per-CLI tweaking.
-- **`loop` block**: Currently a no-op stub (flat block list has no nesting model yet).
 - **Terminal Layout Shifts**: Xterm dimensions may occasionally desync with the internal PTY dimensions if the window is resized very rapidly while a process is initializing.
 
 ## Development
@@ -69,6 +75,9 @@ npm run check
 
 # Run a quick Electron startup/shutdown smoke test
 npm run smoke
+
+# Run the headless engine self-test (loop control flow regression)
+npm test
 
 # Regenerate icon assets (icon.png + icon.ico) from src/assets/icon-source.png
 npm run icons

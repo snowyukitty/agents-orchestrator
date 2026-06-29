@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('api', {
   saveWorkflow: (params) => ipcRenderer.invoke('save-workflow', params),
   loadWorkflow: (params) => ipcRenderer.invoke('load-workflow', params),
 
+  // Headless self-test result reporting (used by `npm test`)
+  selfTestResult: (result) => ipcRenderer.invoke('self-test-result', result),
+
   // File/Directory dialogs
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
