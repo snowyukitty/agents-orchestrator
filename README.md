@@ -4,9 +4,13 @@ A desktop orchestrator application built with Electron, allowing users to automa
 
 ## Project Status
 
-**Version**: 0.1.4 MVP
+**Version**: 0.1.5 MVP
 
 ### Release Notes
+
+#### v0.1.5
+- **Loop structure validation in the editor**: Unbalanced loop markers (a Loop with no End Loop, or a stray End Loop) are now flagged inline with a dashed warning outline and an explanatory tooltip, plus a summary banner above the block list. The run still proceeds safely (the engine skips broken markers) — the warnings just make the structure obvious while editing.
+- **Self-test coverage**: The headless `npm test` now also verifies every shipped template is structurally sound (balanced loops) and checks the unmatched-marker index reporting, so a malformed template or loop-analysis regression fails the build.
 
 #### v0.1.4
 - **Real Loop block**: The `loop` block now actually repeats. It pairs with a new **End Loop** (`loopEnd`) block — every block between a Loop and its matching End Loop runs `count` times. Adding a Loop auto-seeds its End Loop, nested loops are supported, and the loop body is visually indented by nesting depth. Unbalanced markers (a Loop with no End, or a stray End) are skipped with a warning instead of breaking the run.
@@ -34,7 +38,7 @@ A desktop orchestrator application built with Electron, allowing users to automa
 
 ### Completed Features
 - **Visual Workflow Builder**: Users can construct automation workflows by combining blocks (Schedule, Directory, Command, Wait, Send Input, Keypress, Loop / End Loop, Log, Hibernate PC).
-- **Loops**: A **Loop** block repeats every block up to its matching **End Loop** a configurable number of times. Nested loops are supported and the loop body is indented by nesting depth so the structure is readable at a glance.
+- **Loops**: A **Loop** block repeats every block up to its matching **End Loop** a configurable number of times. Nested loops are supported and the loop body is indented by nesting depth so the structure is readable at a glance. Unbalanced loop markers are flagged inline (dashed outline + tooltip) and summarized in a banner, while the engine still runs safely by skipping broken markers.
 - **Templates**: A **🧩 Templates** picker provides pre-built workflows (including a Loop example) as one-click starting points.
 - **Persistent Storage**: Workflows are saved to and loaded from `%APPDATA%/agents-orchestrator/workflows/`, with atomic writes and resilient loading so one malformed workflow file does not break the whole schedule list.
 - **Automated PTY Execution**: The engine executes terminal applications in the background using `node-pty` with modern Windows `ConPTY` enabled, providing full ANSI color support and proper terminal layout.

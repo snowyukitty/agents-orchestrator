@@ -433,16 +433,19 @@ export function matchingLoopEnd(blocks, startIdx) {
 /**
  * Compute the nesting depth of each block for indentation, and flag structural
  * problems (a loop with no end, or an end with no loop). Returns
- * { depths: number[], errors: string[] }.
+ * { depths: number[], errors: string[], unmatched: number[] } where `unmatched`
+ * lists the indices of structurally broken loop/loopEnd markers.
  */
 export function analyzeLoops(blocks) {
   const depths = new Array(blocks.length).fill(0);
   const errors = [];
+  const unmatched = [];
   const stack = []; // indices of open `loop` blocks
   blocks.forEach((block, i) => {
     if (block.type === 'loopEnd') {
       if (stack.length === 0) {
         errors.push(`Block ${i + 1}: “End Loop” without a matching Loop`);
+        unmatched.push(i);
         depths[i] = 0;
       } else {
         stack.pop();
@@ -455,6 +458,7 @@ export function analyzeLoops(blocks) {
   });
   for (const openIdx of stack) {
     errors.push(`Block ${openIdx + 1}: Loop has no matching “End Loop”`);
+    unmatched.push(openIdx);
   }
-  return { depths, errors };
+  return { depths, errors, unmatched };
 }

@@ -99,6 +99,12 @@ class App {
       eq('analyze-open-loop', b.errors.length, 1);
       const c = analyzeLoops([{ type: 'loopEnd' }]);
       eq('analyze-stray-end', c.errors.length, 1);
+      eq('analyze-stray-end-index', c.unmatched, [0]);
+
+      // 8. Every shipped template is structurally sound (balanced loops).
+      TEMPLATES.forEach(t => {
+        eq(`template-balanced:${t.id}`, analyzeLoops(t.blocks).errors.length, 0);
+      });
     } catch (err) {
       failures.push(`exception: ${err && err.message ? err.message : err}`);
     }
@@ -539,8 +545,10 @@ class App {
     list.innerHTML = '';
 
     // Indent blocks by their loop-nesting depth so the body of a Loop reads as
-    // a visually nested group between its Loop and End Loop markers.
-    const { depths } = analyzeLoops(this.workflow.blocks);
+    // a visually nested group between its Loop and End Loop markers; flag any
+    // structurally broken loop markers.
+    const { depths, errors, unmatched } = analyzeLoops(this.workflow.blocks);
+    const unmatchedSet = new Set(unmatched);
 
     this.workflow.blocks.forEach((block, i) => {
       // Add connector line between blocks
@@ -557,12 +565,36 @@ class App {
         el.classList.add('nested');
         el.style.marginLeft = `${Math.min(depth, 6) * 22}px`;
       }
+      if (unmatchedSet.has(i)) {
+        el.classList.add('unmatched');
+        el.title = block.type === 'loop'
+          ? 'This Loop has no matching “End Loop” — its body will be skipped at run time.'
+          : 'This “End Loop” has no matching Loop — it will be ignored at run time.';
+      }
       this._attachBlockEvents(el, block);
       list.appendChild(el);
     });
 
+    this._renderLoopValidation(errors);
+
     this._updateEmptyState();
     this._initSortable();
+  }
+
+  /** Show/hide the loop structure validation banner above the block list. */
+  _renderLoopValidation(errors) {
+    const banner = document.getElementById('loop-validation');
+    if (!banner) return;
+    if (!errors || errors.length === 0) {
+      banner.classList.add('hidden');
+      banner.textContent = '';
+      return;
+    }
+    const head = errors.length === 1
+      ? '⚠ 1 loop structure issue:'
+      : `⚠ ${errors.length} loop structure issues:`;
+    banner.textContent = `${head} ${errors.join(' · ')}`;
+    banner.classList.remove('hidden');
   }
 
   _attachBlockEvents(el, block) {

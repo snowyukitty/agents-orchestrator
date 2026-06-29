@@ -1169,6 +1169,24 @@ html, body {
   border-left: 2px solid color-mix(in srgb, var(--block-loop) 55%, transparent);
 }
 
+/* A loop / End-Loop marker with no matching partner. */
+.workflow-block.unmatched {
+  outline: 1.5px dashed var(--accent-yellow);
+  outline-offset: -1px;
+}
+
+/* ── Loop structure validation banner ──────────────────────── */
+.loop-validation {
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: color-mix(in srgb, var(--accent-yellow) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-yellow) 45%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--accent-yellow);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
 /* ── Templates picker rows ─────────────────────────────────── */
 .tpl-row {
   display: flex;
