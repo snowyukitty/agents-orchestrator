@@ -10,6 +10,7 @@ import {
 
 import { ExecutionEngine, analyzeLoops, matchingLoopEnd } from './engine.js';
 import { TEMPLATES } from './templates.js';
+import { computeJobTarget, isDue, formatCountdown, DEFAULT_GRACE_MS } from './schedule.js';
 
 class App {
   constructor() {
@@ -117,6 +118,33 @@ class App {
       eq('loop-events',
         await loopEvents([L(), { type: 'loop', params: { count: 2 } }, L(), { type: 'loopEnd', params: {} }, L()]),
         [[1, 1, 2, false], [1, 2, 2, false], [1, 2, 2, true]]);
+
+      // 10. Schedule math (computeJobTarget / isDue / formatCountdown).
+      const GRACE = DEFAULT_GRACE_MS;
+      // `once` returns the absolute saved time regardless of `now`.
+      const onceDt = '2026-01-15T08:30';
+      const onceMs = new Date(onceDt).getTime();
+      eq('once-target', computeJobTarget(onceDt, 'once', new Date(2020, 0, 1).getTime(), GRACE), onceMs);
+      eq('invalid-target', computeJobTarget('not-a-date', 'once', 0, GRACE), 0);
+      // `cron` fires today when upcoming, else exactly +24h tomorrow.
+      const cronDt = '2026-01-15T08:30';
+      const beforeNow = new Date(2026, 0, 15, 6, 0, 0).getTime();
+      const afterNow = new Date(2026, 0, 15, 20, 0, 0).getTime();
+      const todayTarget = computeJobTarget(cronDt, 'cron', beforeNow, GRACE);
+      const rolledTarget = computeJobTarget(cronDt, 'cron', afterNow, GRACE);
+      eq('cron-today', todayTarget, new Date(2026, 0, 15, 8, 30, 0, 0).getTime());
+      eq('cron-rolls-24h', rolledTarget - todayTarget, 86_400_000);
+      // isDue: at target true, before false, beyond grace false, edge true.
+      eq('isdue-at', isDue(1000, 1000, GRACE), true);
+      eq('isdue-before', isDue(1000, 999, GRACE), false);
+      eq('isdue-stale', isDue(1000, 1000 + GRACE + 1, GRACE), false);
+      eq('isdue-edge', isDue(1000, 1000 + GRACE, GRACE), true);
+      eq('isdue-invalid', isDue(0, 5000, GRACE), false);
+      // formatCountdown: clamps negatives, pads, and prefixes days.
+      eq('fmt-zero', formatCountdown(0), '00:00:00');
+      eq('fmt-negative', formatCountdown(-5000), '00:00:00');
+      eq('fmt-hms', formatCountdown(3_661_000), '01:01:01');
+      eq('fmt-days', formatCountdown(90_061_000), '1d 01:01:01');
     } catch (err) {
       failures.push(`exception: ${err && err.message ? err.message : err}`);
     }
@@ -1099,7 +1127,7 @@ class App {
     this._refreshingSchedules = null;
     // Fire even if a tick lands up to 5 min late (tolerates throttling / brief
     // sleep). Also bounds staleness so ancient schedules don't fire on load.
-    this._graceMs = 5 * 60 * 1000;
+    this._graceMs = DEFAULT_GRACE_MS;
 
     const modal = document.getElementById('schedule-modal');
     const openModal = () => { this._refreshScheduledJobs(); modal?.classList.remove('hidden'); };
@@ -1171,30 +1199,13 @@ class App {
     this._renderScheduleList();
   }
 
-  /** Compute the next trigger timestamp (ms) for a job. */
+  /** Compute the next trigger timestamp (ms) for a job. Delegates to schedule.js. */
   _jobTarget(job, now) {
-    const base = new Date(job.datetime).getTime();
-    if (isNaN(base)) return 0;
-    if (job.mode === 'cron') {
-      // Daily repeat at the same clock time.
-      const d = new Date(job.datetime);
-      const next = new Date(now);
-      next.setHours(d.getHours(), d.getMinutes(), d.getSeconds() || 0, 0);
-      let t = next.getTime();
-      if (t < now - (this._graceMs || 300000)) t += 86_400_000; // today's window passed → tomorrow
-      return t;
-    }
-    return base; // once
+    return computeJobTarget(job.datetime, job.mode, now, this._graceMs);
   }
 
   _formatCountdown(ms) {
-    const s = Math.max(0, Math.floor(ms / 1000));
-    const d = Math.floor(s / 86400);
-    const h = Math.floor((s % 86400) / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    const p = n => String(n).padStart(2, '0');
-    return d > 0 ? `${d}d ${p(h)}:${p(m)}:${p(sec)}` : `${p(h)}:${p(m)}:${p(sec)}`;
+    return formatCountdown(ms);
   }
 
   _tickSchedules() {
@@ -1221,7 +1232,7 @@ class App {
       if (target <= 0) continue;
       // Due, and not stale beyond the grace window (so a late/throttled tick
       // still fires, but a schedule from hours ago doesn't fire on app load).
-      if (now >= target && (now - target) <= this._graceMs) {
+      if (isDue(target, now, this._graceMs)) {
         // Fire once per occurrence (the target timestamp is the occurrence key).
         if (this._firedTargets[job.id] !== target) {
           this._firedTargets[job.id] = target;
