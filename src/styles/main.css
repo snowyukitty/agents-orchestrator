@@ -612,6 +612,15 @@ html, body {
 
 .param-dir-row input { flex: 1; min-width: 0; }
 
+.param-datetime-row {
+  display: flex;
+  gap: var(--sp-1);
+  flex: 1;
+  min-width: 0;
+}
+
+.param-datetime-row input { flex: 1; min-width: 0; }
+
 /* Block actions (delete, duplicate) */
 .block-actions {
   display: flex;
@@ -1148,4 +1157,5 @@ html, body {
 .sched-countdown.due { color: var(--accent-yellow); }
 .sched-countdown.running { color: var(--accent-green); }
 .sched-countdown.passed { color: var(--text-muted); font-weight: 400; }
+.sched-countdown.handled { color: var(--text-muted); font-weight: 600; }
 .sched-state { width: 14px; text-align: center; font-size: var(--font-size-sm); }

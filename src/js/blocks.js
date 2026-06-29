@@ -239,8 +239,13 @@ function buildParamField(paramDef, params) {
       break;
 
     case 'datetime-local':
-      inputHtml = `<input type="datetime-local" data-param="${key}"
-        value="${esc(String(value))}" />`;
+      inputHtml = `
+        <div class="param-datetime-row">
+          <input type="datetime-local" data-param="${key}"
+            value="${esc(String(value))}" />
+          <button class="btn btn-icon btn-sm set-now-btn"
+            data-param="${key}" title="Set current time" type="button">⏱</button>
+        </div>`;
       break;
 
     case 'select': {

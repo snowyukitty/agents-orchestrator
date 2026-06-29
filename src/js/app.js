@@ -434,6 +434,7 @@ class App {
     this.workflow.blocks.splice(idx + 1, 0, copy);
     this.renderBlocks();
     this._onWorkflowChanged();
+    this._markScheduleBlockTargetHandled(copy);
     this._scrollToBlock(copy.id);
   }
 
@@ -499,6 +500,21 @@ class App {
           const input = el.querySelector(`input[data-param="${key}"]`);
           if (input) input.value = dir;
           if (block.type === 'schedule') this._onWorkflowChanged();
+        }
+      });
+    });
+
+    el.querySelectorAll('.set-now-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.param;
+        const value = currentDateTimeLocalValue();
+        block.params[key] = value;
+        const input = el.querySelector(`input[data-param="${key}"]`);
+        if (input) input.value = value;
+        if (block.type === 'schedule') {
+          this._onWorkflowChanged();
+          this._markScheduleBlockTargetHandled(block);
+          this._flashStatus('Schedule set to now');
         }
       });
     });
@@ -1072,20 +1088,22 @@ class App {
       const target = this._jobTarget(job, now);
       const remaining = target - now;
       const running = !!(this.engine?.isRunning && this.workflow?.id === job.id);
+      const handled = this._firedTargets[job.id] === target;
       const passed = job.mode !== 'cron' && now > target + this._graceMs;
       const sel = `[data-job-id="${this._cssEscape(job.id)}"]`;
       const cdEl = document.querySelector(`#schedule-list .sched-countdown${sel}`);
       const stEl = document.querySelector(`#schedule-list .sched-state${sel}`);
 
       if (cdEl) {
-        cdEl.textContent = running ? 'running' : (passed ? 'passed' : this._formatCountdown(remaining));
-        cdEl.classList.toggle('due', !running && !passed && remaining <= 0);
+        cdEl.textContent = running ? 'running' : (passed ? 'passed' : (handled ? 'set' : this._formatCountdown(remaining)));
+        cdEl.classList.toggle('due', !running && !passed && !handled && remaining <= 0);
         cdEl.classList.toggle('running', running);
         cdEl.classList.toggle('passed', passed);
+        cdEl.classList.toggle('handled', handled && !running && !passed);
       }
-      if (stEl) stEl.textContent = running ? '▶' : (passed ? '·' : (remaining <= 0 ? '⏰' : ''));
+      if (stEl) stEl.textContent = running ? '▶' : (passed ? '·' : (handled ? '✓' : (remaining <= 0 ? '⏰' : '')));
 
-      if (!running && !passed && remaining > 0 && (next === null || remaining < next)) next = remaining;
+      if (!running && !passed && !handled && remaining > 0 && (next === null || remaining < next)) next = remaining;
     }
 
     const nextEl = document.getElementById('schedule-next');
