@@ -268,6 +268,12 @@ class App {
       const row = e.target.closest('[data-file]');
       if (row && this._openSavedWorkflow(row.dataset.file)) close();
     });
+
+    // Escape closes whichever modal is open (schedule, templates, workflows).
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(m => m.classList.add('hidden'));
+    });
   }
 
   async _refreshWorkflowsList() {
@@ -329,7 +335,9 @@ class App {
     document.getElementById('workflow-name').value = this.workflow.name;
     this.renderBlocks();
     this._onWorkflowChanged();
-    this._markScheduleBlockTargetHandled(this._scheduleOf(this.workflow));
+    // Note: do NOT mark the schedule target handled here — opening an existing
+    // workflow must keep its (possibly future) schedule armed. Suppression is
+    // only for freshly-created/template schedules that default to "now".
     this._setDirty(false);
     this._termLog(`📂 Opened: ${this.workflow.name} (${this.workflow.blocks.length} blocks)`, 'system');
     return true;
@@ -337,11 +345,14 @@ class App {
 
   async _deleteSavedWorkflow(file, name) {
     if (!confirm(`Delete workflow "${name}"? This removes it from disk and cannot be undone.`)) return;
+    // Resolve via the file's saved id (robust to id sanitization) before the
+    // list is refreshed underneath us.
+    const deleted = (this._savedWorkflowsRaw || []).find(w => w.file === file);
     try {
       await window.api.deleteWorkflow({ file });
       this._termLog(`🗑️ Deleted workflow: ${name}`, 'system');
       // If we just deleted the on-disk copy of what's open, it's now unsaved.
-      if (this.workflow && `${this.workflow.id}.json` === file) this._setDirty(true);
+      if (this.workflow && deleted && deleted.id === this.workflow.id) this._setDirty(true);
     } catch (e) {
       this._termLog(`❌ Delete failed: ${e.message}`, 'stderr');
     }
@@ -1057,7 +1068,7 @@ class App {
       document.getElementById('workflow-name').value = this.workflow.name || 'Loaded';
       this.renderBlocks();
       this._onWorkflowChanged();
-      this._markScheduleBlockTargetHandled(this._scheduleOf(this.workflow));
+      // Keep an imported workflow's schedule armed (don't suppress its target).
       this._setDirty(false);
       this._termLog(`📂 Loaded: ${this.workflow.name} (${this.workflow.blocks.length} blocks)`, 'system');
     } catch (err) {

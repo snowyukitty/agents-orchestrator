@@ -4,9 +4,14 @@ A desktop orchestrator application built with Electron, allowing users to automa
 
 ## Project Status
 
-**Version**: 0.1.8 MVP
+**Version**: 0.1.9 MVP
 
 ### Release Notes
+
+#### v0.1.9 (review & fixes)
+- **Fixed: opening a saved workflow disarmed its schedule.** Opening or importing a workflow wrongly marked its next scheduled occurrence as already-fired (a suppression only meant for freshly-created/template schedules that default to "now"). Saved workflows with a future schedule now stay armed when opened.
+- **Escape closes any open modal** (Templates / My Workflows / Schedules), not just the Schedules dialog.
+- **Robust delete detection**: deleting the on-disk copy of the currently-open workflow now flags it unsaved even when its id needed sanitizing for the filename.
 
 #### v0.1.8
 - **My Workflows manager**: The **📂 Load** button now opens an in-app **My Workflows** browser that lists every saved workflow (with block count and any schedule time), instead of a bare file dialog. Click a row to open it, delete one from disk with its 🗑️ button, start a blank one with **＋ New**, or pull a `.json` from anywhere with **📥 Import file…**. The schedule board stays in sync after deletes.
