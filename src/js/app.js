@@ -25,6 +25,8 @@ class App {
 
     this.engine = new ExecutionEngine();
     this.sortable = null;
+    this._dirty = false;                // unsaved-changes flag
+    this._savedWorkflowsRaw = [];       // last-fetched saved workflows (for the picker)
 
     this._init();
     this._loadDemoWorkflow();
@@ -167,6 +169,7 @@ class App {
   /** Instantiate a template into the editor, filling in dir/time placeholders. */
   _applyTemplate(tpl, { silent = false } = {}) {
     if (!tpl) return;
+    if (!silent && !this._confirmDiscardIfDirty()) return;
     const dir = this._defaultDirectory || '.';
     const now = currentDateTimeLocalValue();
 
@@ -192,6 +195,7 @@ class App {
     // Loading a template should never auto-fire: treat its default schedule
     // time as already handled for the current occurrence.
     this._markScheduleBlockTargetHandled(this._scheduleOf(this.workflow));
+    this._setDirty(false);
 
     if (!silent) {
       this._termLog(`🧩 Loaded template: ${tpl.name}`, 'system');
@@ -235,6 +239,148 @@ class App {
     }).join('');
   }
 
+  // ── My Workflows (saved-workflow manager) ──────────────────
+
+  _initWorkflows() {
+    const modal = document.getElementById('workflows-modal');
+    const close = () => modal?.classList.add('hidden');
+    this._openWorkflowsModal = () => { this._refreshWorkflowsList(); modal?.classList.remove('hidden'); };
+
+    document.getElementById('btn-close-workflows')?.addEventListener('click', close);
+    modal?.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    document.getElementById('btn-new-workflow')?.addEventListener('click', () => {
+      if (this._newWorkflow()) close();
+    });
+    document.getElementById('btn-import-workflow')?.addEventListener('click', async () => {
+      close();
+      await this.loadWorkflow();
+    });
+
+    const list = document.getElementById('workflows-list');
+    list?.addEventListener('click', async (e) => {
+      const delBtn = e.target.closest('[data-delete]');
+      if (delBtn) {
+        e.stopPropagation();
+        await this._deleteSavedWorkflow(delBtn.dataset.delete, delBtn.dataset.name);
+        return;
+      }
+      const row = e.target.closest('[data-file]');
+      if (row && this._openSavedWorkflow(row.dataset.file)) close();
+    });
+  }
+
+  async _refreshWorkflowsList() {
+    const list = document.getElementById('workflows-list');
+    if (!list) return;
+
+    let raw = [];
+    try { raw = await window.api.loadWorkflow({}); } catch (_e) { raw = []; }
+    this._savedWorkflowsRaw = Array.isArray(raw) ? raw : [];
+
+    const items = this._savedWorkflowsRaw.map(w => {
+      const blocks = Array.isArray(w.blocks) ? w.blocks : [];
+      const sb = blocks.find(b => b?.type === 'schedule' && b.params?.datetime);
+      return {
+        file: w.file || '',
+        id: w.id || '',
+        name: (typeof w.name === 'string' && w.name.trim()) ? w.name : 'Untitled',
+        count: blocks.length,
+        scheduled: !!sb,
+        datetime: sb?.params?.datetime || '',
+        mode: sb?.params?.mode || 'once',
+      };
+    }).filter(it => it.file);
+
+    items.sort((a, b) => a.name.localeCompare(b.name));
+
+    if (items.length === 0) {
+      list.innerHTML = `<div class="sched-empty">No saved workflows yet.<br>Build one and hit <strong>💾 Save</strong>, or start from <strong>🧩 Templates</strong>.</div>`;
+      return;
+    }
+
+    list.innerHTML = items.map(it => {
+      const isCurrent = it.id && this.workflow && it.id === this.workflow.id;
+      let when = `${it.count} block${it.count === 1 ? '' : 's'}`;
+      if (it.scheduled) {
+        const t = new Date(it.datetime);
+        const valid = !isNaN(t.getTime());
+        when += ` · ⏱ ${valid ? t.toLocaleString() : 'invalid time'} (${it.mode === 'cron' ? 'Daily' : 'Once'})`;
+      }
+      return `
+        <div class="wf-row" data-file="${this._esc(it.file)}">
+          <div class="wf-main">
+            <div class="wf-name">${isCurrent ? '✏️ ' : ''}${this._esc(it.name)}</div>
+            <div class="wf-when">${this._esc(when)}</div>
+          </div>
+          <button class="btn btn-icon btn-sm wf-delete" data-delete="${this._esc(it.file)}"
+            data-name="${this._esc(it.name)}" title="Delete from disk">🗑️</button>
+        </div>`;
+    }).join('');
+  }
+
+  /** Open a saved workflow (by file basename) from the last-fetched list. */
+  _openSavedWorkflow(file) {
+    const raw = (this._savedWorkflowsRaw || []).find(w => w.file === file);
+    if (!raw) return false;
+    if (!this._confirmDiscardIfDirty()) return false;
+
+    this.workflow = this._normalizeWorkflow(raw);
+    document.getElementById('workflow-name').value = this.workflow.name;
+    this.renderBlocks();
+    this._onWorkflowChanged();
+    this._markScheduleBlockTargetHandled(this._scheduleOf(this.workflow));
+    this._setDirty(false);
+    this._termLog(`📂 Opened: ${this.workflow.name} (${this.workflow.blocks.length} blocks)`, 'system');
+    return true;
+  }
+
+  async _deleteSavedWorkflow(file, name) {
+    if (!confirm(`Delete workflow "${name}"? This removes it from disk and cannot be undone.`)) return;
+    try {
+      await window.api.deleteWorkflow({ file });
+      this._termLog(`🗑️ Deleted workflow: ${name}`, 'system');
+      // If we just deleted the on-disk copy of what's open, it's now unsaved.
+      if (this.workflow && `${this.workflow.id}.json` === file) this._setDirty(true);
+    } catch (e) {
+      this._termLog(`❌ Delete failed: ${e.message}`, 'stderr');
+    }
+    await this._refreshWorkflowsList();
+    this._refreshScheduledJobs();
+  }
+
+  /** Start a blank workflow. Returns false if the user cancelled a discard. */
+  _newWorkflow() {
+    if (!this._confirmDiscardIfDirty()) return false;
+    const dir = this._defaultDirectory || '.';
+    this.workflow = this._normalizeWorkflow({
+      id: `wf-${Date.now()}`, name: 'New Workflow', defaultDirectory: dir, blocks: [],
+    });
+    document.getElementById('workflow-name').value = this.workflow.name;
+    this.renderBlocks();
+    this._onWorkflowChanged();
+    this._setDirty(false);
+    this._flashStatus('New workflow');
+    return true;
+  }
+
+  // ── Unsaved-changes (dirty) tracking ───────────────────────
+
+  _setDirty(val) {
+    this._dirty = !!val;
+    const dot = document.getElementById('dirty-dot');
+    if (dot) dot.classList.toggle('hidden', !this._dirty);
+  }
+
+  _markDirty() {
+    if (!this._dirty) this._setDirty(true);
+  }
+
+  _confirmDiscardIfDirty() {
+    if (!this._dirty) return true;
+    return confirm('You have unsaved changes. Discard them?');
+  }
+
   // ── Initialization ─────────────────────────────────────────
 
   _init() {
@@ -247,6 +393,7 @@ class App {
     this._initScheduler();
     this._initSleep();
     this._initTemplates();
+    this._initWorkflows();
     this._updateEmptyState();
   }
 
@@ -424,6 +571,7 @@ class App {
     nameInput.addEventListener('change', (e) => {
       this.workflow.name = e.target.value;
       this._onWorkflowChanged();
+      this._markDirty();
     });
 
     // Clear all
@@ -433,6 +581,7 @@ class App {
         this.workflow.blocks = [];
         this.renderBlocks();
         this._onWorkflowChanged();
+        this._markDirty();
       }
     });
   }
@@ -471,7 +620,7 @@ class App {
     document.getElementById('btn-run').addEventListener('click', () => this.runWorkflow());
     document.getElementById('btn-stop').addEventListener('click', () => this.engine.abort());
     document.getElementById('btn-save').addEventListener('click', () => this.saveWorkflow());
-    document.getElementById('btn-load').addEventListener('click', () => this.loadWorkflow());
+    document.getElementById('btn-load').addEventListener('click', () => this._openWorkflowsModal());
     document.getElementById('btn-export').addEventListener('click', () => this.exportWorkflow());
 
     const themeSelect = document.getElementById('theme-selector');
@@ -610,6 +759,7 @@ class App {
 
     this.renderBlocks();
     this._onWorkflowChanged();
+    this._markDirty();
     this._markScheduleBlockTargetHandled(block);
     this._scrollToBlock(block.id);
     return block;
@@ -619,6 +769,7 @@ class App {
     this.workflow.blocks = this.workflow.blocks.filter(b => b.id !== id);
     this.renderBlocks();
     this._onWorkflowChanged();
+    this._markDirty();
   }
 
   duplicateBlock(id) {
@@ -632,6 +783,7 @@ class App {
     this.workflow.blocks.splice(idx + 1, 0, copy);
     this.renderBlocks();
     this._onWorkflowChanged();
+    this._markDirty();
     this._markScheduleBlockTargetHandled(copy);
     this._scrollToBlock(copy.id);
   }
@@ -718,6 +870,7 @@ class App {
         } else {
           block.params[key] = input.value;
         }
+        this._markDirty();
         if (block.type === 'schedule') this._onWorkflowChanged();
       };
       input.addEventListener('change', handler);
@@ -735,6 +888,7 @@ class App {
           block.params[key] = dir;
           const input = el.querySelector(`input[data-param="${key}"]`);
           if (input) input.value = dir;
+          this._markDirty();
           if (block.type === 'schedule') this._onWorkflowChanged();
         }
       });
@@ -747,6 +901,7 @@ class App {
         block.params[key] = value;
         const input = el.querySelector(`input[data-param="${key}"]`);
         if (input) input.value = value;
+        this._markDirty();
         if (block.type === 'schedule') {
           this._onWorkflowChanged();
           this._markScheduleBlockTargetHandled(block);
@@ -790,6 +945,7 @@ class App {
         // Re-render to fix connectors and step numbers
         this.renderBlocks();
         this._onWorkflowChanged();
+        this._markDirty();
       }
     });
   }
@@ -881,6 +1037,7 @@ class App {
     try {
       const path = await window.api.saveWorkflow({ workflow: this.workflow });
       this._termLog(`💾 Saved → ${path}`, 'system');
+      this._setDirty(false);
       this._flashStatus('Saved');
     } catch (err) {
       this._termLog(`❌ Save failed: ${err.message}`, 'stderr');
@@ -889,6 +1046,7 @@ class App {
 
   async loadWorkflow() {
     try {
+      if (!this._confirmDiscardIfDirty()) return;
       const filePath = await window.api.openFileDialog();
       if (!filePath) return;
 
@@ -899,6 +1057,8 @@ class App {
       document.getElementById('workflow-name').value = this.workflow.name || 'Loaded';
       this.renderBlocks();
       this._onWorkflowChanged();
+      this._markScheduleBlockTargetHandled(this._scheduleOf(this.workflow));
+      this._setDirty(false);
       this._termLog(`📂 Loaded: ${this.workflow.name} (${this.workflow.blocks.length} blocks)`, 'system');
     } catch (err) {
       this._termLog(`❌ Load failed: ${err.message}`, 'stderr');
@@ -1250,6 +1410,7 @@ class App {
     const nameInput = document.getElementById('workflow-name');
     if (nameInput) nameInput.value = wf.name || 'Scheduled';
     this.renderBlocks();
+    this._setDirty(false);
     document.getElementById('schedule-modal')?.classList.add('hidden');
     this.runWorkflow(`⏰ Scheduled run: "${wf.name}" @ ${new Date().toLocaleString()}`);
   }

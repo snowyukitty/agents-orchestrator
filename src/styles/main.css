@@ -1259,3 +1259,57 @@ html, body {
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+/* ── My Workflows rows ──────────────────────────────────────── */
+.wf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  margin: var(--sp-2) 0;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-cyan);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+.wf-row:hover {
+  border-color: var(--accent-cyan);
+  transform: translateX(2px);
+}
+.wf-main { min-width: 0; }
+.wf-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wf-when {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.wf-delete {
+  flex-shrink: 0;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+.wf-delete:hover { opacity: 1; }
+
+.modal-footer-actions {
+  display: flex;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+/* Unsaved-changes indicator next to the workflow name. */
+.dirty-dot {
+  color: var(--accent-yellow);
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}

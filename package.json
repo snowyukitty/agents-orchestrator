@@ -1,6 +1,6 @@
 {
   "name": "agents-orchestrator",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Visual AI Agent Automation Orchestrator - Block-based CLI automation tool",
   "main": "main.js",
   "scripts": {

@@ -596,6 +596,31 @@ ipcMain.handle('load-workflow', async (_event, { filePath }) => {
   return workflows;
 });
 
+// ── IPC: Delete Workflow ─────────────────────────────────────
+ipcMain.handle('delete-workflow', async (_event, { file, id } = {}) => {
+  const dir = workflowStoreDir();
+  let target = null;
+  if (file) {
+    const base = path.basename(String(file));
+    if (base.endsWith('.json')) target = path.join(dir, base);
+  } else if (id) {
+    target = path.join(dir, safeWorkflowFileName({ id }));
+  }
+  if (!target) throw new Error('No workflow specified to delete');
+
+  // Refuse to touch anything outside the workflow store directory.
+  const resolved = path.resolve(target);
+  if (path.dirname(resolved) !== path.resolve(dir)) {
+    throw new Error('Refusing to delete outside the workflow store');
+  }
+  if (fs.existsSync(resolved)) {
+    fs.unlinkSync(resolved);
+    console.log(`[IPC] delete-workflow: removed ${path.basename(resolved)}`);
+    return true;
+  }
+  return false;
+});
+
 // ── IPC: Directory Picker ────────────────────────────────────
 ipcMain.handle('select-directory', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
